@@ -7,15 +7,15 @@
 class HMM
 {
 public:
-    HMM(std::vector<EmissionModel*>& emit, TransitionModel* transit, std::vector<Real>& prob_pi,
+    HMM(const std::vector<EmissionModel*>& emit, TransitionModel* transit, std::vector<Real>& prob_pi,
         int dim, int state, int coo_num, const char* method);
-    void train_step(const Real* data, size_t* batch, int nbatch);
-    void infer(const Real* data, int* label, size_t* batch, int nbatch);
+    void EM_step(const Real* data, const size_t* batch, const int nbatch);
+    void infer(const Real* data, int* label, const size_t* batch, const int nbatch) const;
     Real update(Real rate);
 
 private:
-    Real EM_step(const Real* data, const size_t* batch, int nbatch);
-    void viterbi(const Real* data, int* label, int n);
+
+    void viterbi(const Real* data, int* label, const int n) const;
     size_t dim_;
     size_t state_;
     size_t coo_num_;

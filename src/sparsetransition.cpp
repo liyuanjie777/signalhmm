@@ -98,7 +98,6 @@ void SparseTransition::getrow(int i, std::vector<int>& id, std::vector<Real>& va
         val.push_back(val_csr[col]);
         id.push_back(indices_csr[col]);
     }
-    return;
 }
 
 void SparseTransition::getcol(int j, std::vector<int>& id, std::vector<Real>& val) const
@@ -112,7 +111,6 @@ void SparseTransition::getcol(int j, std::vector<int>& id, std::vector<Real>& va
         val.push_back(val_csc[col]);
         id.push_back(indices_csc[col]);
     }
-    return;
 }
 
 void SparseTransition::mulMV(const Real* idata, Real* odata) const
@@ -133,7 +131,6 @@ void SparseTransition::mulMV(const Real* idata, Real* odata) const
         }
         odata[i] = acc;
     }
-    return;
 }
 void SparseTransition::mulVM(const Real* idata, Real* odata) const
 {
@@ -153,7 +150,6 @@ void SparseTransition::mulVM(const Real* idata, Real* odata) const
         }
         odata[j] = acc;
     }
-    return;
 }
 
 void SparseTransition::epsilon_accumulate(const Real* idata, int n)
@@ -167,7 +163,6 @@ void SparseTransition::epsilon_accumulate(const Real* idata, int n)
         }
         cache_[i] = logsumexp2x(cache_[i], logsumexp(tmp.data(), n));
     }
-    return;
 }
 
 void SparseTransition::epsilon_mstep(const Real* alpha, const Real* beta, Real* odata) const
@@ -189,7 +184,6 @@ void SparseTransition::epsilon_mstep(const Real* alpha, const Real* beta, Real* 
     {
         odata[i] = logsumexp2x(odata[i], tmp[i]);
     }
-    return;
 }
 
 void SparseTransition::normalize()
@@ -220,7 +214,7 @@ void SparseTransition::update(Real alpha)
 {
     for (size_t i = 0; i < num_; ++i)
     {
-        val_csr[i] = logsumexp2x(val_csr[i], std::log(alpha) + cache_[i]);
+        val_csr[i] = logsumexp2x(std::log(Real(1.0) - alpha) + val_csr[i], std::log(alpha) + cache_[i]);
     }
     normalize();
     cache_.assign(num_, -std::numeric_limits<Real>::infinity());

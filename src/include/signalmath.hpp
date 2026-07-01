@@ -51,16 +51,31 @@ void kmer_matrix(std::vector<int>& x, std::vector<int>& y, std::vector<T>& val, 
     size_t nstate = (1ULL << (2 * kmer));
     size_t mask = nstate - 1;
     for(size_t i = 0; i < nstate; ++i) {
+        x.push_back(static_cast<int>(i));
+        y.push_back(static_cast<int>(i));
+        val.push_back(stay);
         for(int next_base = 0; next_base < 4; ++next_base) {
             size_t next_state = ((i << 2) | next_base) & mask;
+            if (i == next_base) {
+                val.back() += (1.0 - stay) / 4.0;
+                continue;
+            }
             x.push_back(static_cast<int>(i));
             y.push_back(static_cast<int>(next_state));
-            if (next_state == i) {
-                val.push_back(stay);
-            } else {
-                val.push_back((1.0 - stay) / 3.0);
-            }
+            val.push_back((1.0 - stay) / 4.0);
         }
     }
     return;
+}
+
+template <typename T> 
+std::vector<T> kmer_current(const std::vector<T>& data, const std::vector<char>& mv) {
+    std::vector<T> res;
+    for (int i = 0; i < data.size(); ++i) {
+        if (mv[i] == 0) {
+            continue;
+        }
+        res.push_back(data[i]);
+    }
+    return res;
 }

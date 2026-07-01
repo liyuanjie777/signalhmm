@@ -8,20 +8,17 @@ class ReadsFile
 {
 public:
     ReadsFile(){};
-    ReadsFile(int max_chunk_size, int stride, int max_batch_size){
-        _max_batch_size = max_batch_size;
-        _max_chunk_size = max_chunk_size;
-        _stride = stride;
-    };
     void load(std::string& fn, int max_cache, bool shuffle);
     void readID(std::string& sequence, std::vector<Real>& data, std::vector<char>& mv, const std::string& uuid);
     void read(std::string& sequence, std::vector<Real>& data, std::vector<char>& mv);
-    void readChunk(std::vector<Real>& data, std::vector<size_t>& batchs, std::vector<ChunkInfo>& chunkinfo);
-    void saveRead(std::string& fn, const std::string& sequence, const std::vector<float>& data, const std::vector<char>& mv, const std::string& uuid);
+    int readChunk(std::vector<Real>& data, std::vector<size_t>& batchs, std::vector<ChunkInfo>& chunkinfo, int chunk_size, int batch_size, int stride);
+    std::string getSequence(const int id);
+    void reset() {_glob_id = 0; _cur_data_i = 0;};
+    static void save(const std::string& fn, const std::string& sequence, const std::vector<Real>& data, const std::vector<char>& mv, const std::string& uuid);
     int readsNumber;
 
 private:
-    std::vector<char> decompress(const char* data, size_t n);
+    static std::vector<char> decompress(const char* data, size_t n);
     void rescaleData(std::vector<float>& data, float scale, float offset);
 
     std::vector<size_t> _poss_bytes;
@@ -40,11 +37,5 @@ private:
     int _glob_id = 0;
     // train dataset
     std::vector<int> _random_idx; 
-    int _max_chunk_size = 2000; 
-    int _max_batch_size = 10;
-    int _glob_chunk = 0;
-    int _stride = 1000;
     int _cur_data_i = 0;
-    std::vector<int> _batchs;
-    std::vector<Real> _data_chunk;
 };

@@ -18,18 +18,26 @@
 
 void test() {
     std::string fn = "/home/yuanjie/Projects/4sU_nanopore/hiPSC-CM-cDNA-IVT_UTP.dat";
+    std::string fn_model = "./model.txt";
     ReadsFile reads = ReadsFile();
     reads.load(fn, 100, true);
     std::string seq;
     std::vector<Real> data;
     std::vector<char> mv;
     
+    StepFitHMMGMM model(7, 1, "etp");
+    model.preTrain(fn);
+    model.train(3, 10, 0.2);
+    model.saveModel(fn_model);
+    model.infer(10);
+
+
     for(int i=0; i < 1; i++){
         reads.read(seq, data, mv);
         std::vector<Real> data2;
         std::vector<size_t> batch;
         std::vector<ChunkInfo> chunk;
-        reads.readChunk(data2, batch, chunk);
+        //reads.readChunk(data2, batch, chunk);
         MAD(data.data(), data.size());
         auto a = kmer_to_index(seq.c_str(), seq.size(), 7);
         

@@ -6,20 +6,19 @@
 class StepFitHMMGMM
 {
 public:
-    StepFitHMMGMM(int state_number, int dim, const std::vector<Real>& koff, const char* method);
-    StepFitHMMGMM(const std::vector<EmissionModel*>& emissions, int kmer, Real koff, const char* method);
+    StepFitHMMGMM(int kmer, int target, const char* method);
     ~StepFitHMMGMM() { clear(); };
     void clear();
-    void loadData(std::string& fn);
-    void saveModel(std::string& fn);
-    void train(int batch, int max_iter, Real rate = 0.2);
+    void preTrain(std::string& fn);
+    void saveModel(std::string& fn) const;
+    void train(const int batch, const int max_iter, const Real rate = 0.2);
     void infer(int batch);
 
 private:
     std::string _filename;
     const char* _method;
-    int _state_number;
-    int _dim;
+    size_t _state_number;
+    int _kmer;
     ReadsFile _readsfile;
 
     HMM* _hmm_model = nullptr;

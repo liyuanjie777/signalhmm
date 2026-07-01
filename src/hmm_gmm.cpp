@@ -1,101 +1,42 @@
 #include "hmm_gmm.h"
 #include "fileio.h"
-#include "gaussianmodel.h"
+#include "gaussianmixmodel.h"
 #include "hmm.h"
 #include "model.h"
 #include "mymath.hpp"
+#include "signalmath.hpp"
 #include "sparsetransition.h"
 #include <cstddef>
 #include <fstream>
 #include <string>
+#include <iostream>
 
 
-StepFitHMMGMM::StepFitHMMGMM(
-    int state_number, int dim, const std::vector<Real>& koff, const char* method)
-    : _state_number(state_number), _dim(dim), _method(method)
+
+StepFitHMMGMM::StepFitHMMGMM(int kmer, int target, const char* method)
 {
-    for (int i = 0; i < _state_number; ++i)
-    {
-        _emission.push_back(new GaussianModel(dim));
-    }
+    _kmer = kmer;
+    _state_number = (1ULL << (2 * kmer));
     _transition = new SparseTransition();
-    std::vector<int> x;
-    std::vector<int> y;
-    std::vector<Real> val;
-    for (int i = 0; i < _state_number; ++i)
-    {
-        for (int j = 0; j < _state_number; ++j)
-        {
-            if (i == j)
-            {
-                x.push_back(i);
-                y.push_back(j);
-                val.push_back(exp(-koff[i]));
+    for(size_t i = 0; i < _state_number; ++i) {
+        bool has_target = false;
+        for (int j = 0; j < kmer; ++j) {
+            size_t base = (i >> (j * 2)) & 0b11;
+            if (base == target) {
+                has_target = true;
             }
-            else if (i + 1 == j)
-            {
-                x.push_back(i);
-                y.push_back(j);
-                val.push_back(1 - exp(-koff[i]));
-            }
+        }
+        if (has_target) {
+            _emission.push_back(new GaussianMixModel(1));
+        }
+        else {
+            _emission.push_back(new GaussianMixModel(1));
         }
     }
-    int coo_num = x.size();
-    _transition->setValues(x.data(), y.data(), val.data(), coo_num, _state_number);
-    _init_prob.resize(_state_number, 1.0);
-    _hmm_model = new HMM(_emission, _transition, _init_prob, _dim, _state_number, coo_num, _method);
-}
-
-StepFitHMMGMM::StepFitHMMGMM(std::string& fn)
-{
-    std::ifstream file(fn);
-    std::string key;
-    std::string method;
-    Real value;
-    int dim;
-    int number;
-    file >> method;
-    file >> number;
-    file >> dim;
-    _dim = dim;
-    _state_number = number;
-    std::vector<int> coo_x;
-    std::vector<int> coo_y;
-    std::vector<Real> coo_val;
-
-    if (method == "gaussian")
-    {
-        int emit_para_num = dim * (dim + 1) + 2;
-        for (int i = 0; i < number; ++i)
-        {
-            std::vector<Real> emit_val;
-            for (int j = 0; j < emit_para_num; ++j)
-            {
-                file >> value;
-                emit_val.push_back(value);
-            }
-            _emission.push_back(new GaussianModel(dim));
-            _emission.back()->setValues(emit_val.data(), emit_val.size());
-        }
-        for (int i = 0; i < number; ++i)
-        {
-            file >> value;
-            _init_prob.push_back(exp(value));
-        }
-        int coox, cooy;
-        Real cooval;
-        while (file >> coox >> cooy >> cooval)
-        {
-            coo_x.push_back(coox);
-            coo_y.push_back(cooy);
-            coo_val.push_back(cooval);
-        }
-        int coo_num = coo_x.size();
-        _transition = new SparseTransition();
-        _transition->setValues(coo_x.data(), coo_y.data(), coo_val.data(), coo_x.size(), number);
-        _hmm_model =
-            new HMM(_emission, _transition, _init_prob, _dim, _state_number, coo_num, _method);
-    }
+    _init_prob.resize(_state_number);
+    std::fill(_init_prob.begin(), _init_prob.end(), Real(1.0) / Real(_state_number));
+    _transition = new SparseTransition();
+    _hmm_model = new HMM(_emission, _transition, _init_prob, 1, _state_number, _state_number * 5 - 4, method);
 }
 
 void StepFitHMMGMM::clear()
@@ -118,119 +59,144 @@ void StepFitHMMGMM::clear()
     }
 }
 
-void StepFitHMMGMM::loadData(std::string& fn)
+void StepFitHMMGMM::preTrain(std::string& fn)
 {
     _filename = fn;
     _readsfile.load(fn, 500, true);
+    std::string seq;
+    std::vector<Real> data;
+    std::vector<char> mv;
+    constexpr int loop = 1;
+    for (int k = 0; k < loop; ++k) {
+        for (int i = 0; i < 10000; ++i) {
+            _readsfile.read(seq, data, mv);
+            std::vector<int> idx = kmer_to_index(seq.data(), seq.size(), _kmer);
+            std::vector<Real> current = kmer_current(data, mv);
+            for(int j = 0; j < idx.size(); ++j) {
+                Real val = current[j + _kmer / 2];
+                Real gamma = 0.0;
+                _emission[idx[j]]->log_accumulate(&val, &gamma, 1);
+            }
+        }
+        for (int i = 0; i < _emission.size(); ++i) {
+            _emission[i]->update(1.0);
+        }
+    }
+    std::vector<Real> coo_val;
+    std::vector<int> coo_x;
+    std::vector<int> coo_y;
+    kmer_matrix(coo_x, coo_y, coo_val, _kmer, Real(0.9));
+    _transition->setValues(coo_x.data(), coo_y.data(), coo_val.data(), coo_x.size(), _state_number);
+    return;
 }
 
 
-void StepFitHMMGMM::saveModel(std::string& fn)
-{
-    std::string method = "gaussian";
+void StepFitHMMGMM::saveModel(std::string& fn) const {
     std::ofstream file(fn);
-    if (method == "gaussian")
+    file << "#emission\n";
+    for (int i = 0; i < _state_number; ++i)
     {
-        file << method << " " << _state_number << " " << _dim << "\n";
-        for (int i = 0; i < _state_number; ++i)
+        std::vector<Real> val = _emission[i]->save();
+        for (int j = 0; j < val.size(); ++j)
         {
-            std::vector<Real> val = _emission[i]->save();
-            for (int j = 0; j < val.size(); ++j)
-            {
-                file << val[j] << " ";
-            }
-            file << "\n";
-        }
-        for (int i = 0; i < _state_number; ++i)
-        {
-            file << _init_prob[i] << " ";
+            file << val[j] << " ";
         }
         file << "\n";
-        std::vector<int> coo_x(_transition->num_values());
-        std::vector<int> coo_y(_transition->num_values());
-        std::vector<Real> coo_val(_transition->num_values());
-        _transition->save(coo_x.data(), coo_y.data(), coo_val.data());
-        for (int i = 0; i < coo_x.size(); ++i)
-        {
-            file << coo_x[i] << " " << coo_y[i] << " " << coo_val[i] << std::endl;
-        }
+    }
+    file << "#initial\n";
+    for (int i = 0; i < _init_prob.size(); ++i) {
+        file << _init_prob[i] << "\n";
+    }
+    file << "#transition\n";
+    std::vector<int> coo_x(_transition->num_values());
+    std::vector<int> coo_y(_transition->num_values());
+    std::vector<Real> coo_val(_transition->num_values());
+    _transition->save(coo_x.data(), coo_y.data(), coo_val.data());
+    for (int i = 0; i < coo_x.size(); ++i)
+    {
+        file << coo_x[i] << " " << coo_y[i] << " " << coo_val[i] << std::endl;
     }
 }
 
-void StepFitHMMGMM::train(int batch, int max_iter, Real rate)
+void StepFitHMMGMM::train(const int batch, const int max_iter,
+                          const Real rate)
 {
     int reads_number = _readsfile.readsNumber;
-    std::vector<std::vector<int>> batch_id;
+    _readsfile.reset();
     std::vector<Real> x_data;
     std::vector<size_t> x_batch;
-    for (int i = 0; i < 10; ++i)
-    {
-        if (i % batch == 0)
-        {
-            batch_id.push_back(std::vector<int>());
-        }
-        batch_id.back().push_back(i);
-    }
+    std::vector<ChunkInfo> x_info;
 
     for (int iter = 0; iter < max_iter; ++iter)
     {
-        for (int i = 0; i < batch_id.size(); ++i)
-        {
-            //_readsfile.getReads(batch_id[i], x_data, _dim, x_batch);
-            _hmm_model->train_step(x_data.data(), x_batch.data(), x_batch.size() - 1);
+        int count = 0;
+        int tag = _readsfile.readChunk(x_data, x_batch, x_info, 102, batch, 75);
+        while(tag == 1) {
+            _hmm_model->EM_step(x_data.data(), x_batch.data(), x_batch.size() - 1);
+            tag = _readsfile.readChunk(x_data, x_batch, x_info, 102, batch, 75);
+            count++;
+            if (count >= 10) {break;}
         }
-        Real resi = _hmm_model->update(rate);
+        _readsfile.reset();
+        const Real resi = _hmm_model->update(rate);
         printf("iter: %d, prob: %f\n", iter, resi);
     }
 }
 void StepFitHMMGMM::infer(int batch)
 {
-    std::string fn = "/home/yuanjie/code/MapSignal/src/test_result.dat";
     int reads_number = _readsfile.readsNumber;
-    std::vector<std::vector<int>> batch_id;
     std::vector<Real> x_data;
     std::vector<int> x_label;
     std::vector<size_t> x_batch;
-    for (int i = 0; i < reads_number; ++i)
-    {
-        if (i % batch == 0)
-        {
-            batch_id.push_back(std::vector<int>());
-        }
-        batch_id.back().push_back(i);
+    std::vector<ChunkInfo> x_info;
+    _readsfile.reset();
+    int tag = _readsfile.readChunk(x_data, x_batch, x_info, 1024, 1, 76);
+    for (int i = 0; i < 1; ++i) {
+        std::string a = _readsfile.getSequence(x_info[i][0]);
+        printf(a.c_str());
+        printf("tag: %d\n", tag);
     }
-
-    for (int i = 0; i < batch_id.size(); ++i)
-    {
-        //_readsfile.getReads(batch_id[i], x_data, _dim, x_batch);
-        int num_batch = x_batch.size() - 1;
-        x_label.resize(x_batch[num_batch], 0);
-        _hmm_model->infer(x_data.data(), x_label.data(), x_batch.data(), num_batch);
-        std::vector<Real> odata(_emission.size(), 0);
-        for (int j = 0; j < num_batch; ++j)
-        {
-            odata.resize(_emission.size(), 0);
-            int start_pos = x_batch[j];
-            int end_pos = start_pos + 1;
-            std::vector<Real> mean(_dim);
-            for (size_t t = x_batch[j]; t < x_batch[j + 1]; ++t)
-            {
-                if (x_label[t] == x_label[start_pos])
-                {
-                    end_pos = t + 1;
-                }
-                else
-                {
-                    vec_mean(
-                        x_data.data() + start_pos * _dim, end_pos - start_pos, mean.data(), _dim);
-                    _emission[x_label[start_pos]]->score(
-                        mean.data(), &odata[x_label[start_pos]], 1);
-                    start_pos = t;
-                    end_pos = t + 1;
-                }
+    while(tag == 1) {
+        x_label.resize(x_data.size());
+        _hmm_model->infer(x_data.data(), x_label.data(), x_batch.data(), x_batch.size() - 1);
+        std::vector<char> x_mv(x_data.size(), 1);
+        for (int i = 1; i < x_data.size() - 1; ++i) {
+            if ((x_label[i] != x_label[i - 1]) & (x_label[i] != x_label[i + 1])) {
+                int state = x_label[i];
+                auto b = _emission[state];
+                continue;
             }
-            //_readsfile.saveReads(fn, odata, batch_id[i][j]);
+            if (i == 0) {
+                x_mv[i] = 0;
+            }
+            else if (x_label[i] != x_label[i - 1]) {
+                x_mv[i] = (x_mv[i - 1] == 1)? 0 : 1;
+            }
+            else {
+                x_mv[i] = x_mv[i - 1];
+            }
         }
-        printf("infer: %d%\n", i * batch * 100 / reads_number);
+
+        ReadsFile::save("./data.dat","aaa", x_data, x_mv, "1111111111111111");
+        return;
+        std::vector<int> val;
+        for (int j = 0; j < x_label.size(); ++j) {
+            if (val.size() == 0) {
+                val.push_back(x_label[j]);
+            }
+            else if (val.back() != x_label[j]) {
+                    val.push_back(x_label[j]);
+            }
+        }
+        auto b = index_to_kmer(val.data(), val.size(), _kmer);
+        printf(b.c_str());
+        printf("\n");
+        tag = _readsfile.readChunk(x_data, x_batch, x_info, 1024, 10, 768);
+        for (int i = 0; i < 1; ++i) {
+            std::string a = _readsfile.getSequence(x_info[i][0]);
+            printf(a.c_str());
+            printf("\n");
+        }
+        printf("tag: %d", tag);
     }
 }

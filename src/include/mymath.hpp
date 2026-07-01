@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <iostream>
 #include <unordered_map>
 #include <vector>
 
@@ -76,6 +77,7 @@ template <typename T> T log_normalize(T* x, int n)
     for (int i = 0; i < n; i++)
     {
         x[i] -= val;
+
     }
     return val;
 }

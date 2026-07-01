@@ -7,20 +7,21 @@
 #include "gaussianmixmodel.h"
 #include "mymath.hpp"
 #include <algorithm>
+#include <iostream>
 
 GaussianMixModel::GaussianMixModel(int npeak)
 {
     npeak_ = npeak;
     means_.resize(npeak_, 0.0);
+    Real width = 4.0 / Real(npeak_);
     for (int i = 0; i < npeak_; ++i) {
-        means_[i] = -1.0 + 2.0 / (Real(npeak_ - 1));
+        means_[i] = (-4.0 + Real(2 * i) * width + width) / 2.0;
     }
     vars_.resize(npeak_, 0.01);
     log_weights_.resize(npeak, std::log(1.0 / Real(npeak_)));
     sum_k_gamma_.resize(npeak_, 0.0);
     sum_k_x_.resize(npeak_, 0.0);
     sum_k_xx_.resize(npeak, 0.0);
-    return;
 }
 
 void GaussianMixModel::log_emission(const Real* obs, Real* log_probs, int num) const
@@ -70,18 +71,17 @@ void GaussianMixModel::reset()
 
 void GaussianMixModel::update(Real alpha)
 {
-    Real log_alpha = std::log(alpha);
-    Real log_beta = std::log(1 - alpha);
+    const Real log_beta = std::log(1 - alpha);
     double sum = 0.0;
     for (int k = 0; k < npeak_; ++k) sum += sum_k_gamma_[k];
     for (int k = 0; k < npeak_; ++k) {
-        if (sum_k_gamma_[k] > 0.0) {
-            Real mu_new = sum_k_x_[k] / sum_k_gamma_[k];
+        if (sum_k_gamma_[k] > 0) {
+            const Real mu_new = sum_k_x_[k] / sum_k_gamma_[k];
             Real var_new = (sum_k_xx_[k] / sum_k_gamma_[k]) - (mu_new * mu_new);
-            var_new = std::max(var_new, Real(1e-9));
+            var_new = std::max(var_new, static_cast<Real>(1e-12));
             means_[k] = (1.0 - alpha) * means_[k] + alpha * mu_new;
             vars_[k]  = (1.0 - alpha) * vars_[k]  + alpha * var_new;
-            log_weights_[k] = logsumexp2x(log_beta + log_weights_[k], log_alpha + Real(sum_k_gamma_[k] / sum));
+            log_weights_[k] = logsumexp2x(log_beta + log_weights_[k], static_cast<Real>(std::log(alpha * sum_k_gamma_[k] / sum)));
         }
     }
     reset();
@@ -90,23 +90,25 @@ void GaussianMixModel::update(Real alpha)
 
 void GaussianMixModel::log_accumulate(const Real* x, const Real* gamma, int num)
 {
-    for (int k=0; k < npeak_; ++k) {
-        double var = vars_[k];
-        double norm_const = 1.0 / std::sqrt(2.0 * M_PI * var);
-        double inv_2var = -0.5 / var;
-        double mu = means_[k];
-        double weight = std::exp(log_weights_[k]);
-        for (size_t i = 0; i < num; ++i) {
-            double xval = x[i];
-            double diff = xval - mu;
-            double pdf_k = norm_const * std::exp(diff * diff * inv_2var);
-            double r_ik = std::exp(double(gamma[i])) * (weight * pdf_k); 
-            sum_k_gamma_[k] += r_ik;
-            sum_k_x_[k] += r_ik * xval;
-            sum_k_xx_[k] += r_ik * xval * xval;
+    for (size_t i = 0; i < num; ++i) {
+        const double g_i = std::exp(static_cast<double>(gamma[i]));
+        std::vector<double> scores(npeak_);
+        double sum_scores = 0.0;
+        for (int k = 0; k < npeak_; ++k) {
+            const double diff = x[i] - means_[k];
+            const double pdf_k = (1.0 / std::sqrt(2.0 * M_PI * vars_[k])) * std::exp(-0.5 * diff * diff / vars_[k]);
+            scores[k] = std::exp(log_weights_[k]) * pdf_k;
+            sum_scores += scores[k];
+        }
+        if (sum_scores > 0.0) {
+            for (int k = 0; k < npeak_; ++k) {
+                double r_ik = g_i * (scores[k] / sum_scores);
+                sum_k_gamma_[k] += r_ik;
+                sum_k_x_[k] += r_ik * x[i];
+                sum_k_xx_[k] += r_ik * x[i] * x[i];
+            }
         }
     }
-    return;
 }
 
 std::vector<Real> GaussianMixModel::save()
