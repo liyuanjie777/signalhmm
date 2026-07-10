@@ -6,45 +6,25 @@
  */
 #include "hmm.h"
 #include "mymath.hpp"
+#include "sparsematrix.h"
+#include "signalmath.hpp"
 #include <omp.h>
 
-HMM::HMM(const std::vector<EmissionModel*>& emit, TransitionModel* transit, std::vector<Real>& prob_pi, const int dim, const int state,
-         const int coo_num, const char* method)
-    : dim_(dim), state_(state), coo_num_(coo_num), method_(method), emit_(emit), transit_(transit),
-      log_pi_(prob_pi)
-{
+HMM::HMM(const std::vector<EmissionModel*>& emit, TransitionModel* transit, std::vector<Real>& prob_pi, const char* method)
+    : method_(method), emit_(emit), transit_(transit), log_pi_(prob_pi) {
     log_pi_cache_.resize(log_pi_.size(), -std::numeric_limits<Real>::infinity());
     for (int i = 0; i < log_pi_.size(); ++i)
         log_pi_[i] = std::log(log_pi_[i]);
     log_normalize(log_pi_.data(), log_pi_.size());
-    for (int i = 0; i < emit_.size(); ++i)
-    {
-        EmissionModel* ptr_i = emit_[i];
-        bool found = false;
-        for (auto& group : shared_emit_)
-        {
-            int j = group[0];
-            if (emit_[j] == ptr_i)
-            {
-                group.push_back(i);
-                found = true;
-                break;
-            }
-        }
-        if (!found)
-        {
-            shared_emit_.push_back({i});
-        }
-    }
 }
 
 Real HMM::update(const Real rate)
 {
     if (std::strchr(method_, 'e') != nullptr)
     {
-        for (auto & k : shared_emit_)
+        for (auto & k : emit_)
         {
-            emit_[k[0]]->update(1.0);
+            k->update(1.0);
         }
     }
     if (std::strchr(method_, 't') != nullptr)
@@ -62,128 +42,162 @@ Real HMM::update(const Real rate)
     return res;
 }
 
-void HMM::infer(const Real* data, int* label, const size_t* batch, const int nbatch) const {
+void HMM::infer(const std::vector<std::vector<Real>>& datas, std::vector<std::vector<int>>& labels, const int data_dim) const {
+    if (labels.size() != datas.size()) {
+        labels.resize(datas.size());
+    }
+    for (int i = 0; i < labels.size(); ++i) {
+        labels[i].resize(datas[i].size() / data_dim);
+    }
 #pragma omp parallel for
-    for (int i = 0; i < nbatch; i++)
+    for (int i = 0; i < datas.size(); i++)
     {
-        viterbi(&data[batch[i] * dim_], &label[batch[i]], batch[i + 1] - batch[i]);
+        viterbi(datas[i].data(), labels[i].data(), labels[i].size(), data_dim);
     }
 }
 
-void HMM::EM_step(const Real* data, const size_t* batch, const int nbatch)
-{
-    epsilon_.resize(coo_num_ * nbatch, -std::numeric_limits<Real>::infinity());
-    gamma_.resize(state_ * batch[nbatch], -std::numeric_limits<Real>::infinity());
+void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const std::vector<std::string>& sequences, const int data_dim, const int kmer) {
+    const int coo_num = transit_->num_values();
+    const int state = transit_->num_states();
+    std::vector<Real> epsilons(coo_num * datas.size(), -std::numeric_limits<Real>::infinity());
+    std::vector<MixMatrix> gammas;
+    for (int i = 0; i < datas.size(); ++i) {
+        const Real* data = datas[i].data();
+        const char* sequence = sequences[i].c_str();
+        const int data_size = datas[i].size() / data_dim;
+        const int seq_size = sequences[i].size();
+        std::vector<int> coo_x;
+        std::vector<int> coo_y;
+        coarse_align(sequence, seq_size, kmer, data_size, 20, coo_x, coo_y);
+        gammas.emplace_back(coo_x.data(), coo_y.data(), coo_x.size(), data_size, state, -std::numeric_limits<Real>::infinity());
+    }
     Real total_residual = 0;
+    //E-step
 #pragma omp parallel for reduction(+ : total_residual)
-    for (int i = 0; i < nbatch; ++i)
-    {
-        const int n_i = batch[i + 1] - batch[i];
-        const Real* data_i = data + batch[i] * dim_;
-        Real* gamma_i = gamma_.data() + state_ * batch[i];
-        Real* epsilon_i = nullptr;
+    for (int i = 0; i < datas.size(); ++i) {
+        const Real* data = datas[i].data();
+        const int data_size = datas[i].size() / data_dim;
+        MixMatrix& gamma = gammas[i];
+        MixMatrix emit_log_prob(gamma);
+
+        Real* epsilon = nullptr;
         if (std::strchr(method_, 't') != nullptr)
         {
-            epsilon_i = epsilon_.data() + coo_num_ * i;
+            epsilon = epsilons.data() + coo_num * i;
         }
 
-        std::vector<Real> beta(state_, 0.0);
-        std::vector<Real> beta_next(state_, -std::numeric_limits<Real>::infinity());
-        std::vector<Real> emit_log_prob(n_i * state_);
+        SparseVector beta;
+        SparseVector beta_next;
+        SparseVectorView alpha_pre;
+        SparseVectorView alpha;
         Real residual = 0;
         // forward
-        for (int t = 0; t < n_i; ++t)
+        for (int t = 0; t < data_size; ++t)
         {
-            size_t offset = t * state_;
-            for (size_t j = 0; j < state_; ++j)
+            alpha = gamma.get_row(t);
+            alpha_pre = emit_log_prob.get_row(t);
+            for (int j = 0; j < alpha.size; ++j)
             {
-                emit_[j]->log_emission(&data_i[t * dim_], &emit_log_prob[offset + j], 1);
+                emit_[alpha.indices[j]]->log_emission(&data[t * data_dim], &alpha.data[j], 1);
+                alpha_pre.data[j] = alpha.data[j];
             }
         }
-        memcpy(gamma_i, emit_log_prob.data(), sizeof(Real) * state_);
-        vec_add(gamma_i, log_pi_.data(), state_);
-        residual += log_normalize(gamma_i, state_);
-        for (int t = 1; t < n_i; ++t)
-        {
-            const size_t id = t * state_;
-            const size_t id_pre = (t - 1) * state_;
-            transit_->mulVM(&gamma_i[id_pre], &gamma_i[id]);
-            vec_add(&gamma_i[id], &emit_log_prob[id], state_);
-            residual += log_normalize(&gamma_i[id], state_);
+        alpha_pre = gamma.get_row(0);
+        for (int id = 0; id < alpha_pre.size; ++id) {
+            alpha_pre.data[id] += log_pi_[alpha_pre.indices[id]];
         }
-        vec_add(&gamma_i[(n_i - 1) * state_], beta.data(), state_);
-        log_normalize(&gamma_i[(n_i - 1) * state_], state_);
-        for (int t = n_i - 2; t >= 0; --t)
+        residual += log_normalize(alpha_pre.data, alpha_pre.size);
+        for (int t = 1; t < data_size; ++t)
         {
-            std::swap(beta, beta_next);
-            const size_t id = t * state_;
-            const size_t id_next = (t + 1) * state_;
-            vec_add(beta_next.data(), &emit_log_prob[id_next], state_);
-            transit_->mulMV(beta_next.data(), beta.data());
+            alpha = gamma.get_row(t);
+            alpha_pre = gamma.get_row(t - 1);
+            transit_->mulVM(alpha_pre, alpha);
+            residual += log_normalize(alpha.data, alpha.size);
+        }
+        //backward
+        beta = emit_log_prob.get_row(data_size - 1);
+        std::fill_n(beta.data, beta.size, 0);
+        for (int t = data_size - 2; t >= 0; --t)
+        {
+            beta_next = emit_log_prob.get_row(t + 1);
+            vec_add(beta_next.data, beta.data, beta.size);
+            beta = emit_log_prob.get_row(t);
+            std::fill_n(beta.data, beta.size, -std::numeric_limits<Real>::infinity());
+            alpha_pre = beta;
+            alpha = beta_next;
+            transit_->mulMV(alpha, alpha_pre);
+            alpha = gamma.get_row(t);
             if (std::strchr(method_, 't') != nullptr)
             {
-                transit_->epsilon_mstep(&gamma_i[id], beta_next.data(), epsilon_i);
+                transit_->epsilon_E_step(alpha, alpha_pre, epsilon);
             }
-            log_normalize(beta.data(), state_);
-            vec_add(&gamma_i[id], beta.data(), state_);
-            log_normalize(&gamma_i[id], state_);
+            log_normalize(beta.data, beta.size);
+            vec_add(alpha.data, beta.data, beta.size);
+            log_normalize(alpha.data, alpha.size);
         }
-        total_residual += residual / n_i;
+        total_residual += residual / data_size;
     }
-
+    // M-step
+    if (std::strchr(method_, 'p') != nullptr)
+    {
+        for (int i = 0; i < datas.size(); ++i)
+        {
+            SparseVectorView vec = gammas[i].get_row(0);
+            for (int t = 0; t < vec.size; ++t)
+            {
+                const int j = vec.indices[t];
+                log_pi_cache_[j] = logsumexp2x(log_pi_cache_[j], vec.data[t]);
+            }
+        }
+    }
     if (std::strchr(method_, 'e') != nullptr)
     {
+        std::vector<Real> data_all;
+        for (int i = 0; i < datas.size(); ++i) {
+            data_all.insert(data_all.end(), datas[i].begin(), datas[i].end());
+            gammas[i].transpose();
+        }
 #pragma omp parallel for
-        for (int k = 0; k < shared_emit_.size(); ++k)
+        for (int j= 0; j < emit_.size(); ++j)
         {
-            std::vector<Real> gamma_j(batch[nbatch], -std::numeric_limits<Real>::infinity());
-            for (int t = 0; t < batch[nbatch]; ++t)
-            {
-                for (int s = 0; s < shared_emit_[k].size(); ++s)
-                {
-                    int j = shared_emit_[k][s];
-                    gamma_j[t] = logsumexp2x(gamma_j[t], gamma_[t * state_ + j]);
+            std::vector<Real> gamma(data_all.size() / data_dim, -std::numeric_limits<Real>::infinity());
+            Real* gamma_ptr = gamma.data();
+            for (int i = 0; i < datas.size(); ++i) {
+                SparseVectorView vec = gammas[i].get_row(j);
+                for (int t = 0; t < vec.size; ++t) {
+                    gamma_ptr[vec.indices[t]] += vec.data[t];
                 }
+                gamma_ptr += datas[i].size() / data_dim;
             }
-            emit_[shared_emit_[k][0]]->log_accumulate(data, gamma_j.data(), batch[nbatch]);
+            emit_[j]->log_accumulate(data_all.data(), gamma.data(), gamma.size());
         }
     }
     if (std::strchr(method_, 't') != nullptr)
     {
-        transit_->epsilon_accumulate(epsilon_.data(), nbatch);
-    }
-    if (std::strchr(method_, 'p') != nullptr)
-    {
-        for (int i = 0; i < nbatch; ++i)
-        {
-            for (int j = 0; j < state_; ++j)
-            {
-                log_pi_cache_[j] = logsumexp2x(log_pi_cache_[j], gamma_[batch[i] * state_ + j]);
-            }
-        }
+        transit_->epsilon_M_step(epsilons.data(), epsilons.size());
     }
     residual_ += total_residual;
 }
 
-void HMM::viterbi(const Real* data, int* label, const int n) const {
-    std::vector<int> col_id;
-    std::vector<Real> col_val;
-    std::vector<Real> row(state_);
-    std::vector<Real> row_pre(state_);
-    const size_t N = n * state_;
-    std::vector<size_t> dp(N);
+void HMM::viterbi(const Real* data, int* label, const int n, const int data_dim) const {
+    const int coo_num = transit_->num_values();
+    const int state = transit_->num_states();
+    std::vector<Real> row(state);
+    std::vector<Real> row_pre(state);
+    const size_t N = n * state;
+    std::vector<int> dp(N);
     std::vector<Real> emit_log_prob(N);
     for (int t = 0; t < n; ++t)
     {
-      const size_t offset = t * state_;
-        for (size_t j = 0; j < state_; ++j)
+      const size_t offset = t * state;
+        for (size_t j = 0; j < state; ++j)
         {
-            emit_[j]->log_emission(&data[t * dim_], &emit_log_prob[offset + j], 1);
+            emit_[j]->log_emission(&data[t * data_dim], &emit_log_prob[offset + j], 1);
         }
     }
     std::fill(dp.begin(), dp.end(), 0);
     // max_forward
-    for (int j = 0; j < state_; j++)
+    for (int j = 0; j < state; j++)
     {
         row_pre[j] = emit_log_prob[j] + log_pi_[j];
     }
@@ -191,20 +205,21 @@ void HMM::viterbi(const Real* data, int* label, const int n) const {
 
     for (int i = 1; i < n; i++)
     {
-      const size_t id = i * state_;
-        size_t id_pre = (i - 1) * state_;
-        for (int j = 0; j < state_; j++)
+      const size_t id = i * state;
+        size_t id_pre = (i - 1) * state;
+        for (int j = 0; j < state; j++)
         {
           const Real log_prob = emit_log_prob[id + j];
-            transit_->getcol(j, col_id, col_val);
-            for (int k = 0; k < col_val.size(); ++k)
+            SparseVector vec;
+            vec = transit_->get_col(j);
+            for (int k = 0; k < vec.size; ++k)
             {
-                col_val[k] += row_pre[col_id[k]];
+                vec.data[k] += row_pre[vec.indices[k]];
             }
             const int maxk =
-                std::distance(col_val.begin(), std::max_element(col_val.begin(), col_val.end()));
-            dp[id + j] = col_id[maxk];
-            row[j] = col_val[maxk] + log_prob;
+                std::distance(vec.data, std::max_element(vec.data, vec.data + vec.size));
+            dp[id + j] = vec.indices[maxk];
+            row[j] = vec.data[maxk] + log_prob;
         }
         std::swap(row, row_pre);
     }
@@ -214,7 +229,7 @@ void HMM::viterbi(const Real* data, int* label, const int n) const {
     int j = std::distance(row_pre.begin(), it);
     for (int i = n - 1; i >= 0; --i)
     {
-        size_t id = i * size_t(state_) + j;
+        size_t id = i * static_cast<size_t>(state) + j;
         label[i] = j;
         j = dp[id];
     }

@@ -8,7 +8,7 @@
 #include "mymath.hpp"
 #include <algorithm>
 
-SparseTransition::SparseTransition(const int* x, const int* y, const Real* val, int num, int dim)
+SparseTransition::SparseTransition(const int* x, const int* y, const Real* val, const int num, const int dim)
 {
     dim_ = dim;
     num_ = num;
@@ -87,72 +87,85 @@ Real SparseTransition::log_transition(int i, int j) const
     return res;
 }
 
-void SparseTransition::getrow(int i, std::vector<int>& id, std::vector<Real>& val) const
-{
-    id.clear();
-    val.clear();
-    int start = ptr_csr[i];
-    int end = ptr_csr[i + 1];
-    for (int col = start; col < end; ++col)
-    {
-        val.push_back(val_csr[col]);
-        id.push_back(indices_csr[col]);
+SparseVectorView SparseTransition::get_row(const int i) {
+    if (i >= dim_) {
+        throw std::out_of_range("index out of range");
     }
+    SparseVectorView result;
+    result.data = &val_csr[ptr_csr[i]];
+    result.indices = &indices_csr[ptr_csr[i]];
+    result.size = ptr_csr[i + 1] - ptr_csr[i];
+    return result;
 }
 
-void SparseTransition::getcol(int j, std::vector<int>& id, std::vector<Real>& val) const
+SparseVectorView SparseTransition::get_col(const int j)
 {
-    id.clear();
-    val.clear();
-    int start = ptr_csc[j];
-    int end = ptr_csc[j + 1];
-    for (int col = start; col < end; ++col)
-    {
-        val.push_back(val_csc[col]);
-        id.push_back(indices_csc[col]);
+    if (j >= dim_) {
+        throw std::out_of_range("index out of range");
     }
+    SparseVectorView result;
+    result.data = &val_csc[ptr_csc[j]];
+    result.indices = &indices_csc[ptr_csc[j]];
+    result.size = ptr_csc[j + 1] - ptr_csc[j];
+    return result;
 }
 
-void SparseTransition::mulMV(const Real* idata, Real* odata) const
-{
-    for (int i = 0; i < dim_; ++i)
-    {
-        int start = ptr_csr[i];
-        int end = ptr_csr[i + 1];
-        if (start == end)
-        {
-            odata[i] = -std::numeric_limits<Real>::infinity();
+void SparseTransition::mulMV(const SparseVectorView& idata, SparseVectorView& odata) const {
+    if (odata.size == 0) {
+        return;
+    }
+    for (int j = 0; j < idata.size; ++j) {
+        const int col= idata.indices[j];
+        const int start = ptr_csc[col];
+        const int end = ptr_csc[col + 1];
+        if (start == end) {
             continue;
         }
-        Real acc = -std::numeric_limits<Real>::infinity();
-        for (int col = start; col < end; ++col)
-        {
-            acc = logsumexp2x(acc, val_csr[col] + idata[indices_csr[col]]);
+        int i = 0;
+        for (int row = start; row < end; ++row) {
+            const int i_dense = indices_csc[row];
+            while ((i < odata.size) && (i_dense > odata.indices[i])) {
+                i++;
+            }
+            if (i >= odata.size) {
+                break;
+            }
+            if (i_dense == odata.indices[i]) {
+                odata.data[i] = logsumexp2x(odata.data[i], val_csc[row] + idata.data[j]);
+                i++;
+            }
         }
-        odata[i] = acc;
     }
 }
-void SparseTransition::mulVM(const Real* idata, Real* odata) const
-{
-    for (int j = 0; j < dim_; ++j)
-    {
-        int start = ptr_csc[j];
-        int end = ptr_csc[j + 1];
-        if (start == end)
-        {
-            odata[j] = -std::numeric_limits<Real>::infinity();
+void SparseTransition::mulVM(const SparseVectorView& idata, SparseVectorView& odata) const {
+    if (odata.size == 0) {
+        return;
+    }
+    for (int i = 0; i < idata.size; ++i) {
+        const int row = idata.indices[i];
+        const int start = ptr_csr[row];
+        const int end = ptr_csr[row + 1];
+        if (start == end) {
             continue;
         }
-        Real acc = -std::numeric_limits<Real>::infinity();
-        for (int col = start; col < end; ++col)
-        {
-            acc = logsumexp2x(acc, val_csc[col] + idata[indices_csc[col]]);
+        int j = 0;
+        for (int col = start; col < end; ++col) {
+            const int j_dense = indices_csr[col];
+            while ((j < odata.size) && (j_dense > odata.indices[j])) {
+                j++;
+            }
+            if (j >= odata.size) {
+                break;
+            }
+            if (j_dense == odata.indices[j]) {
+                odata.data[j] = logsumexp2x(odata.data[j], val_csr[col] + idata.data[i]);
+                j++;
+            }
         }
-        odata[j] = acc;
     }
 }
 
-void SparseTransition::epsilon_accumulate(const Real* idata, int n)
+void SparseTransition::epsilon_M_step(const Real* idata, int n)
 {
     for (size_t i = 0; i < num_; ++i)
     {
@@ -165,18 +178,26 @@ void SparseTransition::epsilon_accumulate(const Real* idata, int n)
     }
 }
 
-void SparseTransition::epsilon_mstep(const Real* alpha, const Real* beta, Real* odata) const
+void SparseTransition::epsilon_E_step(const SparseVectorView& alpha, const SparseVectorView& beta, Real* odata) const
 {
     std::vector<Real> tmp(num_, -std::numeric_limits<Real>::infinity());
-    for (int i = 0; i < dim_; ++i)
-    {
-        int start = ptr_csr[i];
-        int end = ptr_csr[i + 1];
-        if (start == end)
-            continue;
-        for (int col = start; col < end; ++col)
-        {
-            tmp[col] = val_csr[col] + alpha[i] + beta[indices_csr[col]];
+    std::copy_n(val_csr.data(), num_, tmp.data());
+    for (int i = 0;i < alpha.size; ++i) {
+        const int i_dense = alpha.indices[i];
+        const int start = ptr_csr[i_dense];
+        const int end = ptr_csr[i_dense + 1];
+        int pointer = start;
+        for (int j = 0; j < beta.size; ++j) {
+            const int j_dense = beta.indices[j];
+            while ((pointer < end) && (indices_csr[pointer] < j_dense)) {
+                pointer++;
+            }
+            if (pointer >= end) {
+                break;
+            }
+            if (indices_csr[pointer] == j_dense) {
+                tmp[pointer] += alpha.data[i] + beta.data[j];
+            }
         }
     }
     log_normalize(tmp.data(), tmp.size());
@@ -192,8 +213,8 @@ void SparseTransition::normalize()
     for (int i = 0; i < dim_; ++i)
     {
         res.clear();
-        int start = ptr_csr[i];
-        int end = ptr_csr[i + 1];
+        const int start = ptr_csr[i];
+        const int end = ptr_csr[i + 1];
         for (int col = start; col < end; ++col)
         {
             res.push_back(val_csr[col]);
@@ -233,7 +254,7 @@ void SparseTransition::save(int* x, int* y, Real* val)
     }
 }
 
-void SparseTransition::setValues(const int* x, const int* y, const Real* val, int num, int dim)
+void SparseTransition::fill(const int* x, const int* y, const Real* val, const int num, const int dim)
 {
     dim_ = dim;
     num_ = num;

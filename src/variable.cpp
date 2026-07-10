@@ -111,3 +111,23 @@ void DiagMatrix::update(const Real* x) {
 			mat[j][i] = x[j * (k + 1) + i];
 	return;
 }
+
+SparseVectorView::SparseVectorView(const SparseVector& other): data(other.data), indices(other.indices), size(other.size) {
+    if (size == 0) {
+        data = nullptr;
+        indices = nullptr;
+    }
+}
+
+SparseVectorView& SparseVectorView::operator=(const SparseVector& other) {
+    if (size == 0) {
+        data = nullptr;
+        indices = nullptr;
+    }
+    else {
+        data = other.data;
+        indices = other.indices;
+    }
+    size = other.size;
+    return *this;
+}

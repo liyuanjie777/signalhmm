@@ -19,15 +19,17 @@ class TransitionModel
 public:
     virtual ~TransitionModel() {}
     virtual Real log_transition(int i, int j) const = 0;
-    virtual void getrow(int i, std::vector<int>& id, std::vector<Real>& val) const = 0;
-    virtual void getcol(int j, std::vector<int>& id, std::vector<Real>& val) const = 0;
-    virtual void mulMV(const Real* idata, Real* odata) const = 0;
-    virtual void mulVM(const Real* idata, Real* odata) const = 0;
+    virtual SparseVectorView get_row(int i) = 0;
+    virtual SparseVectorView get_col(int j) = 0;
+    virtual void mulMV(const SparseVectorView& idata, SparseVectorView& odata) const = 0;
+    virtual void mulVM(const SparseVectorView& idata, SparseVectorView& odata) const = 0;
     virtual int num_states() const = 0;
     virtual int num_values() const = 0;
     virtual void save(int* x, int* y, Real* val) = 0;
-    virtual void setValues(const int* x, const int* y, const Real* val, int num, int dim) = 0;
-    virtual void epsilon_mstep(const Real* alpha, const Real* beta, Real* odata) const {}
-    virtual void epsilon_accumulate(const Real* idata, int n) {}
+    virtual void fill(const int* x, const int* y, const Real* val, int num, int dim) = 0;
+    virtual void epsilon_E_step(const SparseVectorView& alpha, const SparseVectorView& beta, Real* odata) const {}
+    virtual void epsilon_M_step(const Real* idata, int n) {}
     virtual void update(Real alpha) {};
 };
+
+

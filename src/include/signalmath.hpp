@@ -6,7 +6,7 @@
 #include <vector>
 #include <string>
 
-inline std::vector<int> kmer_to_index(const char* seq, int n, int kmer)
+inline std::vector<int> kmer_to_index(const char* seq, const int n, const int kmer)
 {
     static int char_to_bit_table[128] = {0};
     char_to_bit_table['A'] = char_to_bit_table['a'] = 0;
@@ -19,12 +19,12 @@ inline std::vector<int> kmer_to_index(const char* seq, int n, int kmer)
     }
     size_t  code = 0;
     for (int i = 0; i < kmer; ++i) {
-        code = (code << 2) | char_to_bit_table[(int)seq[i] & 127];
+        code = (code << 2) | char_to_bit_table[static_cast<int>(seq[i]) & 127];
     }
-    size_t mask = (1LL << (2 * kmer)) - 1;
+    const size_t mask = (1LL << (2 * kmer)) - 1;
     codes.push_back(static_cast<int>(code));
     for (int i = kmer; i < n; ++i) {
-        code = ((code << 2) | char_to_bit_table[(int)seq[i] & 127]) & mask;
+        code = ((code << 2) | char_to_bit_table[static_cast<int>(seq[i]) & 127]) & mask;
         codes.push_back(static_cast<int>(code));
     }
     return codes;
@@ -48,8 +48,8 @@ inline std::string index_to_kmer(const int* codes, int n, int kmer)
 
 template <typename T> 
 void kmer_matrix(std::vector<int>& x, std::vector<int>& y, std::vector<T>& val, int kmer, T stay) {
-    size_t nstate = (1ULL << (2 * kmer));
-    size_t mask = nstate - 1;
+    const size_t nstate = (1ULL << (2 * kmer));
+    const size_t mask = nstate - 1;
     for(size_t i = 0; i < nstate; ++i) {
         x.push_back(static_cast<int>(i));
         y.push_back(static_cast<int>(i));
@@ -79,3 +79,33 @@ std::vector<T> kmer_current(const std::vector<T>& data, const std::vector<char>&
     }
     return res;
 }
+
+void coarse_align(const char* sequence, const int n, const int kmer, const int data_length, const int band_width, std::vector<int>& coo_x, std::vector<int>& coo_y) {
+    const std::vector<int> seq = kmer_to_index(sequence, n, kmer);
+    const int seq_length = seq.size();
+    if (data_length <= seq.size()) {
+        return;
+    }
+    coo_x.reserve(data_length * band_width);
+    coo_y.reserve(data_length * band_width);
+    std::vector<bool> repeat(seq_length, false);
+    const int skip = data_length / seq_length;
+    int base_id = 0;
+    for (int i = 0; i < data_length; ++i) {
+        if (i % skip == 0) {
+            base_id += 1;
+        }
+        base_id = (base_id >= seq_length) ? seq_length - 1 : base_id;
+        std::fill(repeat.begin(), repeat.end(), false);
+        for (int j = 0; j < band_width; ++j) {
+            const int base_id_j = std::clamp(base_id + j - band_width / 2, 0, seq_length - 1);
+            if (repeat[base_id_j]) {
+                continue;
+            }
+            repeat[base_id_j] = true;
+            coo_y.push_back(seq[base_id_j]);
+            coo_x.push_back(i);
+        }
+    }
+}
+
