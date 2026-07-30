@@ -11,34 +11,6 @@
 #include <string>
 #include <iostream>
 
-
-
-StepFitHMMGMM::StepFitHMMGMM(int kmer, int target, const char* method)
-{
-    _kmer = kmer;
-    _state_number = (1ULL << (2 * kmer));
-    _transition = new SparseTransition();
-    for(size_t i = 0; i < _state_number; ++i) {
-        bool has_target = false;
-        for (int j = 0; j < kmer; ++j) {
-            size_t base = (i >> (j * 2)) & 0b11;
-            if (base == target) {
-                has_target = true;
-            }
-        }
-        if (has_target) {
-            _emission.push_back(new GaussianMixModel(1));
-        }
-        else {
-            _emission.push_back(new GaussianMixModel(1));
-        }
-    }
-    _init_prob.resize(_state_number);
-    std::fill(_init_prob.begin(), _init_prob.end(), Real(1.0) / Real(_state_number));
-    _transition = new SparseTransition();
-    _hmm_model = new HMM(_emission, _transition, _init_prob, 1, _state_number, _state_number * 5 - 4, method);
-}
-
 void StepFitHMMGMM::clear()
 {
     if (_transition != nullptr)
@@ -49,47 +21,166 @@ void StepFitHMMGMM::clear()
     for (int i = 0; i < _emission.size(); ++i)
     {
         delete _emission[i];
+        _emission[i] = nullptr;
     }
     _emission.clear();
     _init_prob.clear();
-    if (_hmm_model == nullptr)
+    if (_hmm_model != nullptr)
     {
         delete _hmm_model;
         _hmm_model = nullptr;
     }
 }
 
-void StepFitHMMGMM::preTrain(std::string& fn)
-{
-    _filename = fn;
-    _readsfile.load(fn, 500, true);
-    std::string seq;
-    std::vector<Real> data;
-    std::vector<char> mv;
-    constexpr int loop = 1;
-    for (int k = 0; k < loop; ++k) {
-        for (int i = 0; i < 10000; ++i) {
-            _readsfile.read(seq, data, mv);
-            std::vector<int> idx = kmer_to_index(seq.data(), seq.size(), _kmer);
-            std::vector<Real> current = kmer_current(data, mv);
-            for(int j = 0; j < idx.size(); ++j) {
-                Real val = current[j + _kmer / 2];
-                Real gamma = 0.0;
-                _emission[idx[j]]->log_accumulate(&val, &gamma, 1);
-            }
+void StepFitHMMGMM::allocateModel(const std::string& sequence, const int extend_number, const int kmer) {
+    clear();
+    _state_number = sequence.size() * extend_number;
+    _extend_number = extend_number;
+    _ref_sequence = sequence;
+    _transition = new SparseTransition();
+    _emission.resize(_state_number);
+    _kmer_name.resize(_state_number);
+    const int kmer_pad = kmer / 2;
+    std::unordered_map<std::string, GaussianMixModel*> kmer_model_cache;
+    for (int i = 0; i < _state_number; ++i) {
+        const int ref_pos = i / _extend_number;
+        int start = ref_pos - kmer_pad;
+        std::string sub_kmer;
+        if (start < 0) {
+            sub_kmer.append(-start, 'N');
+            start = 0;
         }
-        for (int i = 0; i < _emission.size(); ++i) {
-            _emission[i]->update(1.0);
+        const int len = std::min(kmer - static_cast<int>(sub_kmer.size()),
+                           static_cast<int>(sequence.size()) - start);
+        if (len > 0) {
+            sub_kmer += sequence.substr(start, len);
+        }
+        if (static_cast<int>(sub_kmer.size()) < kmer) {
+            sub_kmer.append(kmer - sub_kmer.size(), 'N');
+        }
+        _kmer_name[i] = sub_kmer;
+        if (i % _extend_number != 0) {
+            _emission[i] = _emission[i - 1];
+            continue;
+        }
+        if (auto it = kmer_model_cache.find(sub_kmer); it != kmer_model_cache.end()) {
+            _emission[i] = it->second;
+        } else {
+            GaussianMixModel* new_model = new GaussianMixModel(1);
+            _emission[i] = new_model;
+            kmer_model_cache[sub_kmer] = new_model;
         }
     }
+    _init_prob.resize(_state_number);
+    std::fill(_init_prob.begin(), _init_prob.end(), static_cast<Real>(1.0) / static_cast<Real>(_state_number));
+    _transition = new SparseTransition();
+    _hmm_model = new HMM(_emission, _transition, _init_prob, _method);
     std::vector<Real> coo_val;
     std::vector<int> coo_x;
     std::vector<int> coo_y;
-    kmer_matrix(coo_x, coo_y, coo_val, _kmer, Real(0.9));
-    _transition->setValues(coo_x.data(), coo_y.data(), coo_val.data(), coo_x.size(), _state_number);
+    for (int i = 0; i < _state_number; ++i) {
+        coo_x.push_back(i);
+        coo_y.push_back(i);
+        coo_val.push_back(std::exp(-static_cast<Real>(extend_number) / 31));
+        int j = i + 1;
+        if (j >= _state_number) {
+            continue;
+        }
+        coo_x.push_back(i);
+        coo_y.push_back(j);
+        coo_val.push_back(1.0 - std::exp(-static_cast<Real>(extend_number) / 31));
+    }
+    _transition->fill(coo_x.data(), coo_y.data(), coo_val.data(), coo_x.size(), _state_number);
     return;
 }
 
+void StepFitHMMGMM::loadModel(const std::string& fn_model, const std::string& sequence, const int extend_number, const int kmer) {
+    clear();
+    _state_number = sequence.size() * extend_number;
+    _extend_number = extend_number;
+    _ref_sequence = sequence;
+    _transition = new SparseTransition();
+    _emission.resize(_state_number);
+    _kmer_name.resize(_state_number);
+    const int kmer_pad = kmer / 2;
+    std::unordered_map<std::string, GaussianMixModel*> kmer_model_cache;
+    for (int i = 0; i < _state_number; ++i) {
+        const int ref_pos = i / _extend_number;
+        int start = ref_pos - kmer_pad;
+        std::string sub_kmer;
+        if (start < 0) {
+            sub_kmer.append(-start, 'N');
+            start = 0;
+        }
+        const int len = std::min(kmer - static_cast<int>(sub_kmer.size()),
+                           static_cast<int>(sequence.size()) - start);
+        if (len > 0) {
+            sub_kmer += sequence.substr(start, len);
+        }
+        if (static_cast<int>(sub_kmer.size()) < kmer) {
+            sub_kmer.append(kmer - sub_kmer.size(), 'N');
+        }
+        _kmer_name[i] = sub_kmer;
+        if (i % _extend_number != 0) {
+            _emission[i] = _emission[i - 1];
+            continue;
+        }
+        if (auto it = kmer_model_cache.find(sub_kmer); it != kmer_model_cache.end()) {
+            _emission[i] = it->second;
+        } else {
+            GaussianMixModel* new_model = new GaussianMixModel(1);
+            _emission[i] = new_model;
+            kmer_model_cache[sub_kmer] = new_model;
+        }
+    }
+    _init_prob.clear();
+    _transition = new SparseTransition();
+    _hmm_model = new HMM(_emission, _transition, _init_prob, _method);
+    std::vector<Real> coo_val;
+    std::vector<int> coo_x;
+    std::vector<int> coo_y;
+    std::vector<std::vector<Real>> emits_table;
+    std::ifstream fin(fn_model);
+    if (!fin) {
+        throw std::runtime_error("Cannot open file.");
+    }
+    std::string line;
+    std::string flag;
+    while (std::getline(fin, line))
+    {
+        if (line.empty())
+            continue;
+        if (line[0] == '#') {
+            flag = line;
+            continue;
+        }
+        if (flag == "#transition") {
+            std::stringstream ss(line);
+            Real val;
+            int x, y;
+            ss >> x >> y >> val;
+            coo_val.push_back(val);
+            coo_x.push_back(x);
+            coo_y.push_back(y);
+        }
+        else if (flag == "#initial") {
+            std::stringstream ss(line);
+            Real val;
+            ss >> val;
+            _init_prob.push_back(val);
+        }
+        else if (flag == "#emission"){
+            std::stringstream ss(line);
+            emits_table.push_back({});
+            Real val;
+            while (ss >> val) {
+                emits_table.back().push_back(val);
+            }
+        }
+    }
+    _transition->fill(coo_x.data(), coo_y.data(), coo_val.data(), coo_x.size(), _state_number);
+    return;
+}
 
 void StepFitHMMGMM::saveModel(std::string& fn) const {
     std::ofstream file(fn);

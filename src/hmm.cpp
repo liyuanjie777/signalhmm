@@ -16,6 +16,26 @@ HMM::HMM(const std::vector<EmissionModel*>& emit, TransitionModel* transit, std:
     for (int i = 0; i < log_pi_.size(); ++i)
         log_pi_[i] = std::log(log_pi_[i]);
     log_normalize(log_pi_.data(), log_pi_.size());
+
+    for (int i = 0; i < emit_.size(); ++i)
+    {
+        EmissionModel* ptr_i = emit_[i];
+        bool found = false;
+        for (auto& group : shared_emit_)
+        {
+            int j = group[0];
+            if (emit_[j] == ptr_i)
+            {
+                group.push_back(i);
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            shared_emit_.push_back({i});
+        }
+    }
 }
 
 Real HMM::update(const Real rate)
@@ -48,6 +68,7 @@ void HMM::infer(const std::vector<std::vector<Real>>& datas, std::vector<std::ve
     }
     for (int i = 0; i < labels.size(); ++i) {
         labels[i].resize(datas[i].size() / data_dim);
+        std::fill_n(labels[i].begin(), labels[i].size(), -1);
     }
 #pragma omp parallel for
     for (int i = 0; i < datas.size(); i++)
@@ -56,19 +77,16 @@ void HMM::infer(const std::vector<std::vector<Real>>& datas, std::vector<std::ve
     }
 }
 
-void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const std::vector<std::string>& sequences, const int data_dim, const int kmer) {
+void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_dim) {
     const int coo_num = transit_->num_values();
     const int state = transit_->num_states();
     std::vector<Real> epsilons(coo_num * datas.size(), -std::numeric_limits<Real>::infinity());
     std::vector<MixMatrix> gammas;
     for (int i = 0; i < datas.size(); ++i) {
-        const Real* data = datas[i].data();
-        const char* sequence = sequences[i].c_str();
         const int data_size = datas[i].size() / data_dim;
-        const int seq_size = sequences[i].size();
         std::vector<int> coo_x;
         std::vector<int> coo_y;
-        coarse_align(sequence, seq_size, kmer, data_size, 20, coo_x, coo_y);
+        uniform_align(state, data_size, 20, coo_x, coo_y);
         gammas.emplace_back(coo_x.data(), coo_y.data(), coo_x.size(), data_size, state, -std::numeric_limits<Real>::infinity());
     }
     Real total_residual = 0;
@@ -158,23 +176,29 @@ void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const std::vector
             gammas[i].transpose();
         }
 #pragma omp parallel for
-        for (int j= 0; j < emit_.size(); ++j)
+        for (int k = 0; k < shared_emit_.size(); ++k)
         {
             std::vector<Real> gamma(data_all.size() / data_dim, -std::numeric_limits<Real>::infinity());
             Real* gamma_ptr = gamma.data();
-            for (int i = 0; i < datas.size(); ++i) {
-                SparseVectorView vec = gammas[i].get_row(j);
-                for (int t = 0; t < vec.size; ++t) {
-                    gamma_ptr[vec.indices[t]] += vec.data[t];
+            for (int s = 0; s < shared_emit_[k].size(); ++s)
+            {
+                std::fill_n(gamma.begin(), data_all.size() / data_dim, -std::numeric_limits<Real>::infinity());
+                int j = shared_emit_[k][s];
+                for (int t = 0; t < datas.size(); ++t)
+                {
+                    SparseVectorView vec = gammas[t].get_row(j);
+                    for (int t = 0; t < vec.size; ++t) {
+                        gamma_ptr[vec.indices[t]] = vec.data[t];
+                    }
+                    gamma_ptr += datas[t].size() / data_dim;
                 }
-                gamma_ptr += datas[i].size() / data_dim;
+                emit_[j]->log_accumulate(data_all.data(), gamma.data(), gamma.size());
             }
-            emit_[j]->log_accumulate(data_all.data(), gamma.data(), gamma.size());
         }
     }
     if (std::strchr(method_, 't') != nullptr)
     {
-        transit_->epsilon_M_step(epsilons.data(), epsilons.size());
+        transit_->epsilon_M_step(epsilons.data(), datas.size());
     }
     residual_ += total_residual;
 }
@@ -206,7 +230,6 @@ void HMM::viterbi(const Real* data, int* label, const int n, const int data_dim)
     for (int i = 1; i < n; i++)
     {
       const size_t id = i * state;
-        size_t id_pre = (i - 1) * state;
         for (int j = 0; j < state; j++)
         {
           const Real log_prob = emit_log_prob[id + j];
@@ -227,9 +250,8 @@ void HMM::viterbi(const Real* data, int* label, const int n, const int data_dim)
     // search
     const auto it = std::max_element(row_pre.begin(), row_pre.end());
     int j = std::distance(row_pre.begin(), it);
-    for (int i = n - 1; i >= 0; --i)
-    {
-        size_t id = i * static_cast<size_t>(state) + j;
+    for (int i = n - 1; i >= 0; --i) {
+        const size_t id = i * static_cast<size_t>(state) + j;
         label[i] = j;
         j = dp[id];
     }

@@ -109,3 +109,26 @@ void coarse_align(const char* sequence, const int n, const int kmer, const int d
     }
 }
 
+void uniform_align(const int sequence_length, const int data_length, const int band_width, std::vector<int>& coo_x, std::vector<int>& coo_y) {
+    if (data_length <= sequence_length) {
+        return;
+    }
+    coo_x.reserve(data_length * band_width);
+    coo_y.reserve(data_length * band_width);
+    const int skip = data_length / sequence_length;
+    int base_id = -1;
+    for (int i = 0; i < data_length; ++i) {
+        if (i % skip == 0) {
+            base_id += 1;
+        }
+        base_id = std::clamp(base_id, 0, sequence_length - 1);
+        for (int j = 0; j < band_width; ++j) {
+            const int base_id_j = base_id + j - band_width / 2;
+            if (base_id_j < sequence_length && base_id_j >= 0) {
+                coo_y.push_back(base_id_j);
+                coo_x.push_back(i);
+            }
+        }
+    }
+}
+
