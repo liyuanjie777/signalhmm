@@ -14,8 +14,8 @@ public:
     Real log_transition(int i, int j) const override;
     SparseVectorView get_row(int i) override;
     SparseVectorView get_col(int j) override;
-    void mulMV(const SparseVectorView& idata, SparseVectorView& odata) const override;
-    void mulVM(const SparseVectorView& idata, SparseVectorView& odata) const override;
+    void mulMV(const SparseVectorView& idata, Real* odata) const override;
+    void mulVM(const SparseVectorView& idata, Real* odata) const override;
     int num_states() const override { return dim_; };
     int num_values() const override { return num_; };
     void epsilon_E_step(const SparseVectorView& alpha, const SparseVectorView& beta, Real* odata) const override;

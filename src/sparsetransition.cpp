@@ -110,10 +110,8 @@ SparseVectorView SparseTransition::get_col(const int j)
     return result;
 }
 
-void SparseTransition::mulMV(const SparseVectorView& idata, SparseVectorView& odata) const {
-    if (odata.size == 0) {
-        return;
-    }
+void SparseTransition::mulMV(const SparseVectorView& idata, Real* odata) const {
+    std::fill_n(odata, dim_, -std::numeric_limits<Real>::infinity());
     for (int j = 0; j < idata.size; ++j) {
         const int col= idata.indices[j];
         const int start = ptr_csc[col];
@@ -121,26 +119,14 @@ void SparseTransition::mulMV(const SparseVectorView& idata, SparseVectorView& od
         if (start == end) {
             continue;
         }
-        int i = 0;
         for (int row = start; row < end; ++row) {
             const int i_dense = indices_csc[row];
-            while ((i < odata.size) && (i_dense > odata.indices[i])) {
-                i++;
-            }
-            if (i >= odata.size) {
-                break;
-            }
-            if (i_dense == odata.indices[i]) {
-                odata.data[i] = logsumexp2x(odata.data[i], val_csc[row] + idata.data[j]);
-                i++;
-            }
+            odata[i_dense] = logsumexp2x(odata[i_dense], val_csc[row] + idata.data[j]);
         }
     }
 }
-void SparseTransition::mulVM(const SparseVectorView& idata, SparseVectorView& odata) const {
-    if (odata.size == 0) {
-        return;
-    }
+void SparseTransition::mulVM(const SparseVectorView& idata, Real* odata) const {
+    std::fill_n(odata, dim_, -std::numeric_limits<Real>::infinity());
     for (int i = 0; i < idata.size; ++i) {
         const int row = idata.indices[i];
         const int start = ptr_csr[row];
@@ -148,19 +134,9 @@ void SparseTransition::mulVM(const SparseVectorView& idata, SparseVectorView& od
         if (start == end) {
             continue;
         }
-        int j = 0;
         for (int col = start; col < end; ++col) {
             const int j_dense = indices_csr[col];
-            while ((j < odata.size) && (j_dense > odata.indices[j])) {
-                j++;
-            }
-            if (j >= odata.size) {
-                break;
-            }
-            if (j_dense == odata.indices[j]) {
-                odata.data[j] = logsumexp2x(odata.data[j], val_csr[col] + idata.data[i]);
-                j++;
-            }
+            odata[j_dense] = logsumexp2x(odata[j_dense], val_csr[col] + idata.data[i]);
         }
     }
 }

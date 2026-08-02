@@ -6,24 +6,22 @@
 class StepFitHMMGMM
 {
 public:
-    StepFitHMMGMM(const char* method) : _method(method) {};
     ~StepFitHMMGMM() { clear(); };
     void clear();
-    void allocateModel(const std::string& sequence, const int extend_number, const int kmer);
-    void loadModel(const std::string& fn_model, const std::string& sequence, const int extend_number, const int kmer);
+    void loadData(const std::string& fn, const bool shuffle) { _readsfile.load(fn, shuffle); };
+    void allocateModel(const std::string& fn_fa, const std::string& chrom, const int extend_number, const int peak);
+    void loadModel(const std::string& fn_model, const std::string& fn_fa, const std::string& chrom, const int extend_number, const int peak);
     void saveModel(std::string& fn) const;
-    void train(const int batch, const int max_iter, const Real rate = 0.2);
-    void infer(int batch);
+    void train(const int batch, const int data_dim, const int max_iter, const int sampling, const Real rate, const char* method, const int max_band);
+    void infer(const int batch, const int data_dim, const std::string& fn_out);
 
 private:
-    const char* _method;
-    std::vector<std::string> _kmer_name;
-
-    std::string _filename;
     int _state_number;
     int _extend_number;
-    std::string _ref_sequence;
+    int _peak;
     ReadsFile _readsfile;
+    std::string _sequence;
+    std::string _chrom;
 
     HMM* _hmm_model = nullptr;
     TransitionModel* _transition = nullptr;

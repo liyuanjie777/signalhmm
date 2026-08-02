@@ -32,49 +32,36 @@ void StepFitHMMGMM::clear()
     }
 }
 
-void StepFitHMMGMM::allocateModel(const std::string& sequence, const int extend_number, const int kmer) {
+void StepFitHMMGMM::allocateModel(const std::string& fn_fa, const std::string& chrom, const int extend_number, const int peak) {
     clear();
-    _state_number = sequence.size() * extend_number;
+    _sequence = readFA(fn_fa, chrom);
+    _chrom = chrom;
+    std::reverse(_sequence.begin(), _sequence.end());
+    _state_number = _sequence.size() * extend_number;
     _extend_number = extend_number;
-    _ref_sequence = sequence;
     _transition = new SparseTransition();
     _emission.resize(_state_number);
-    _kmer_name.resize(_state_number);
-    const int kmer_pad = kmer / 2;
-    std::unordered_map<std::string, GaussianMixModel*> kmer_model_cache;
+    _peak = peak;
     for (int i = 0; i < _state_number; ++i) {
-        const int ref_pos = i / _extend_number;
-        int start = ref_pos - kmer_pad;
-        std::string sub_kmer;
-        if (start < 0) {
-            sub_kmer.append(-start, 'N');
-            start = 0;
-        }
-        const int len = std::min(kmer - static_cast<int>(sub_kmer.size()),
-                           static_cast<int>(sequence.size()) - start);
-        if (len > 0) {
-            sub_kmer += sequence.substr(start, len);
-        }
-        if (static_cast<int>(sub_kmer.size()) < kmer) {
-            sub_kmer.append(kmer - sub_kmer.size(), 'N');
-        }
-        _kmer_name[i] = sub_kmer;
         if (i % _extend_number != 0) {
             _emission[i] = _emission[i - 1];
             continue;
         }
-        if (auto it = kmer_model_cache.find(sub_kmer); it != kmer_model_cache.end()) {
-            _emission[i] = it->second;
-        } else {
-            GaussianMixModel* new_model = new GaussianMixModel(1);
+        if (i == 0) {
+            GaussianMixModel* new_model = new GaussianMixModel(peak * 3);
             _emission[i] = new_model;
-            kmer_model_cache[sub_kmer] = new_model;
+        }
+        else {
+            GaussianMixModel* new_model = new GaussianMixModel(peak);
+            _emission[i] = new_model;
         }
     }
     _init_prob.resize(_state_number);
-    std::fill(_init_prob.begin(), _init_prob.end(), static_cast<Real>(1.0) / static_cast<Real>(_state_number));
+    std::fill(_init_prob.begin(), _init_prob.end(), -std::numeric_limits<Real>::infinity());
+    _init_prob[0] = 0.0;
+
     _transition = new SparseTransition();
-    _hmm_model = new HMM(_emission, _transition, _init_prob, _method);
+    _hmm_model = new HMM(_emission, _transition, _init_prob);
     std::vector<Real> coo_val;
     std::vector<int> coo_x;
     std::vector<int> coo_y;
@@ -94,48 +81,33 @@ void StepFitHMMGMM::allocateModel(const std::string& sequence, const int extend_
     return;
 }
 
-void StepFitHMMGMM::loadModel(const std::string& fn_model, const std::string& sequence, const int extend_number, const int kmer) {
+void StepFitHMMGMM::loadModel(const std::string& fn_model, const std::string& fn_fa, const std::string& chrom, const int extend_number, const int peak) {
     clear();
-    _state_number = sequence.size() * extend_number;
+    _sequence = readFA(fn_fa, chrom);
+    _chrom = chrom;
+    std::reverse(_sequence.begin(), _sequence.end());
+    _state_number = _sequence.size() * extend_number;
     _extend_number = extend_number;
-    _ref_sequence = sequence;
     _transition = new SparseTransition();
     _emission.resize(_state_number);
-    _kmer_name.resize(_state_number);
-    const int kmer_pad = kmer / 2;
-    std::unordered_map<std::string, GaussianMixModel*> kmer_model_cache;
+    _peak = peak;
     for (int i = 0; i < _state_number; ++i) {
-        const int ref_pos = i / _extend_number;
-        int start = ref_pos - kmer_pad;
-        std::string sub_kmer;
-        if (start < 0) {
-            sub_kmer.append(-start, 'N');
-            start = 0;
-        }
-        const int len = std::min(kmer - static_cast<int>(sub_kmer.size()),
-                           static_cast<int>(sequence.size()) - start);
-        if (len > 0) {
-            sub_kmer += sequence.substr(start, len);
-        }
-        if (static_cast<int>(sub_kmer.size()) < kmer) {
-            sub_kmer.append(kmer - sub_kmer.size(), 'N');
-        }
-        _kmer_name[i] = sub_kmer;
         if (i % _extend_number != 0) {
             _emission[i] = _emission[i - 1];
             continue;
         }
-        if (auto it = kmer_model_cache.find(sub_kmer); it != kmer_model_cache.end()) {
-            _emission[i] = it->second;
-        } else {
-            GaussianMixModel* new_model = new GaussianMixModel(1);
+        if (i == 0) {
+            GaussianMixModel* new_model = new GaussianMixModel(peak * 3);
             _emission[i] = new_model;
-            kmer_model_cache[sub_kmer] = new_model;
+        }
+        else {
+            GaussianMixModel* new_model = new GaussianMixModel(peak);
+            _emission[i] = new_model;
         }
     }
     _init_prob.clear();
     _transition = new SparseTransition();
-    _hmm_model = new HMM(_emission, _transition, _init_prob, _method);
+    _hmm_model = new HMM(_emission, _transition, _init_prob);
     std::vector<Real> coo_val;
     std::vector<int> coo_x;
     std::vector<int> coo_y;
@@ -178,6 +150,9 @@ void StepFitHMMGMM::loadModel(const std::string& fn_model, const std::string& se
             }
         }
     }
+    for (int i = 0; i < _emission.size(); ++i) {
+        _emission[i]->setValues(emits_table[i].data(), emits_table[i].size());
+    }
     _transition->fill(coo_x.data(), coo_y.data(), coo_val.data(), coo_x.size(), _state_number);
     return;
 }
@@ -188,6 +163,7 @@ void StepFitHMMGMM::saveModel(std::string& fn) const {
     for (int i = 0; i < _state_number; ++i)
     {
         std::vector<Real> val = _emission[i]->save();
+        file << _sequence[i / _extend_number] << " ";
         for (int j = 0; j < val.size(); ++j)
         {
             file << val[j] << " ";
@@ -196,7 +172,7 @@ void StepFitHMMGMM::saveModel(std::string& fn) const {
     }
     file << "#initial\n";
     for (int i = 0; i < _init_prob.size(); ++i) {
-        file << _init_prob[i] << "\n";
+        file << std::exp(_init_prob[i]) << "\n";
     }
     file << "#transition\n";
     std::vector<int> coo_x(_transition->num_values());
@@ -209,10 +185,7 @@ void StepFitHMMGMM::saveModel(std::string& fn) const {
     }
 }
 
-void StepFitHMMGMM::train(const int batch, const int max_iter,
-                          const Real rate)
-{
-    int reads_number = _readsfile.readsNumber;
+void StepFitHMMGMM::train(const int batch, const int data_dim, const int max_iter, const int sampling, const Real rate, const char* method, const int max_band) {
     _readsfile.reset();
     std::vector<Real> x_data;
     std::vector<size_t> x_batch;
@@ -221,73 +194,44 @@ void StepFitHMMGMM::train(const int batch, const int max_iter,
     for (int iter = 0; iter < max_iter; ++iter)
     {
         int count = 0;
-        int tag = _readsfile.readChunk(x_data, x_batch, x_info, 102, batch, 75);
-        while(tag == 1) {
-            _hmm_model->EM_step(x_data.data(), x_batch.data(), x_batch.size() - 1);
-            tag = _readsfile.readChunk(x_data, x_batch, x_info, 102, batch, 75);
-            count++;
-            if (count >= 10) {break;}
+        std::vector<Read> tags = _readsfile.readChunk(batch, _chrom);
+        while(tags.size() > 0) {
+            std::vector<std::vector<Real>> datas;
+            std::vector<std::vector<int>> mvs;
+            for (auto tag : tags) {
+                if (tag.data.size() <= _state_number) {
+                    continue;
+                }
+                datas.push_back(tag.data);
+                mvs.push_back({});
+                count++;
+            }
+            _hmm_model->EM_step(datas, data_dim, method, max_band, mvs);
+            tags = _readsfile.readChunk(batch, _chrom);
+            if (sampling > 0 && count >= sampling) {break;}
         }
         _readsfile.reset();
-        const Real resi = _hmm_model->update(rate);
-        printf("iter: %d, prob: %f\n", iter, resi);
+        const Real resi = _hmm_model->update(rate, method);
+        printf("iter: %d, prob: %f\n", iter, resi / static_cast<Real>(count * batch));
     }
 }
-void StepFitHMMGMM::infer(int batch)
+void StepFitHMMGMM::infer(const int batch, const int data_dim, const std::string& fn_out)
 {
-    int reads_number = _readsfile.readsNumber;
-    std::vector<Real> x_data;
-    std::vector<int> x_label;
-    std::vector<size_t> x_batch;
-    std::vector<ChunkInfo> x_info;
+    std::fstream ofile(fn_out, std::ios::binary | std::ios::trunc | std::ios::out);
+    ofile.close();
     _readsfile.reset();
-    int tag = _readsfile.readChunk(x_data, x_batch, x_info, 1024, 1, 76);
-    for (int i = 0; i < 1; ++i) {
-        std::string a = _readsfile.getSequence(x_info[i][0]);
-        printf(a.c_str());
-        printf("tag: %d\n", tag);
-    }
-    while(tag == 1) {
-        x_label.resize(x_data.size());
-        _hmm_model->infer(x_data.data(), x_label.data(), x_batch.data(), x_batch.size() - 1);
-        std::vector<char> x_mv(x_data.size(), 1);
-        for (int i = 1; i < x_data.size() - 1; ++i) {
-            if ((x_label[i] != x_label[i - 1]) & (x_label[i] != x_label[i + 1])) {
-                int state = x_label[i];
-                auto b = _emission[state];
-                continue;
-            }
-            if (i == 0) {
-                x_mv[i] = 0;
-            }
-            else if (x_label[i] != x_label[i - 1]) {
-                x_mv[i] = (x_mv[i - 1] == 1)? 0 : 1;
-            }
-            else {
-                x_mv[i] = x_mv[i - 1];
-            }
+    std::vector<Read> tags = _readsfile.readChunk(batch, _chrom);
+    while(tags.size() > 0) {
+        std::vector<std::vector<Real>> datas;
+        for (auto tag : tags) {
+            datas.push_back(tag.data);
         }
-
-        ReadsFile::save("./data.dat","aaa", x_data, x_mv, "1111111111111111");
+        std::vector<std::vector<int>> labels(datas.size());
+        _hmm_model->infer(datas, labels, data_dim);
+        for (int i = 0; i < labels.size(); ++i) {
+            tags[i].mv = labels[i];
+        }
+        _readsfile.save(fn_out, tags);
         return;
-        std::vector<int> val;
-        for (int j = 0; j < x_label.size(); ++j) {
-            if (val.size() == 0) {
-                val.push_back(x_label[j]);
-            }
-            else if (val.back() != x_label[j]) {
-                    val.push_back(x_label[j]);
-            }
-        }
-        auto b = index_to_kmer(val.data(), val.size(), _kmer);
-        printf(b.c_str());
-        printf("\n");
-        tag = _readsfile.readChunk(x_data, x_batch, x_info, 1024, 10, 768);
-        for (int i = 0; i < 1; ++i) {
-            std::string a = _readsfile.getSequence(x_info[i][0]);
-            printf(a.c_str());
-            printf("\n");
-        }
-        printf("tag: %d", tag);
     }
 }

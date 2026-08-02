@@ -10,12 +10,9 @@
 #include "signalmath.hpp"
 #include <omp.h>
 
-HMM::HMM(const std::vector<EmissionModel*>& emit, TransitionModel* transit, std::vector<Real>& prob_pi, const char* method)
-    : method_(method), emit_(emit), transit_(transit), log_pi_(prob_pi) {
+HMM::HMM(const std::vector<EmissionModel*>& emit, TransitionModel* transit, std::vector<Real>& prob_pi)
+    :emit_(emit), transit_(transit), log_pi_(prob_pi) {
     log_pi_cache_.resize(log_pi_.size(), -std::numeric_limits<Real>::infinity());
-    for (int i = 0; i < log_pi_.size(); ++i)
-        log_pi_[i] = std::log(log_pi_[i]);
-    log_normalize(log_pi_.data(), log_pi_.size());
 
     for (int i = 0; i < emit_.size(); ++i)
     {
@@ -38,23 +35,25 @@ HMM::HMM(const std::vector<EmissionModel*>& emit, TransitionModel* transit, std:
     }
 }
 
-Real HMM::update(const Real rate)
+Real HMM::update(const Real rate, const char* method)
 {
-    if (std::strchr(method_, 'e') != nullptr)
+    if (std::strchr(method, 'e') != nullptr)
     {
         for (auto & k : emit_)
         {
-            k->update(1.0);
+            k->update(rate);
         }
     }
-    if (std::strchr(method_, 't') != nullptr)
+    if (std::strchr(method, 't') != nullptr)
     {
         transit_->update(rate);
     }
-    if (std::strchr(method_, 'p') != nullptr)
+    if (std::strchr(method, 'p') != nullptr)
     {
-        log_pi_ = log_pi_cache_;
-        log_normalize(log_pi_.data(), log_pi_.size());
+        log_normalize(log_pi_cache_.data(), log_pi_cache_.size());
+        for (int i = 0; i < log_pi_.size(); ++i) {
+            log_pi_[i] = logsumexp2x(std::log(Real(1.0) - rate) + log_pi_[i], std::log(rate) + log_pi_cache_[i]);
+        }
         log_pi_cache_.assign(log_pi_cache_.size(), -std::numeric_limits<Real>::infinity());
     }
     const Real res = residual_;
@@ -77,17 +76,26 @@ void HMM::infer(const std::vector<std::vector<Real>>& datas, std::vector<std::ve
     }
 }
 
-void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_dim) {
+void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_dim, const char* method, const int max_band, const std::vector<std::vector<int>>& mvs) {
     const int coo_num = transit_->num_values();
     const int state = transit_->num_states();
     std::vector<Real> epsilons(coo_num * datas.size(), -std::numeric_limits<Real>::infinity());
     std::vector<MixMatrix> gammas;
     for (int i = 0; i < datas.size(); ++i) {
-        const int data_size = datas[i].size() / data_dim;
-        std::vector<int> coo_x;
-        std::vector<int> coo_y;
-        uniform_align(state, data_size, 20, coo_x, coo_y);
-        gammas.emplace_back(coo_x.data(), coo_y.data(), coo_x.size(), data_size, state, -std::numeric_limits<Real>::infinity());
+        if (mvs[i].size() == 0) {
+            const int data_size = datas[i].size() / data_dim;
+            std::vector<int> coo_x;
+            std::vector<int> coo_y;
+            uniform_align(state, data_size, max_band, coo_x, coo_y);
+            gammas.emplace_back(coo_x.data(), coo_y.data(), coo_x.size(), data_size, state, -std::numeric_limits<Real>::infinity());
+        }
+        else {
+            const int data_size = datas[i].size() / data_dim;
+            std::vector<int> coo_x;
+            std::vector<int> coo_y;
+            mv_align(state, mvs[i].data(), data_size, max_band, coo_x, coo_y);
+            gammas.emplace_back(coo_x.data(), coo_y.data(), coo_x.size(), data_size, state, -std::numeric_limits<Real>::infinity());
+        }
     }
     Real total_residual = 0;
     //E-step
@@ -99,7 +107,7 @@ void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_di
         MixMatrix emit_log_prob(gamma);
 
         Real* epsilon = nullptr;
-        if (std::strchr(method_, 't') != nullptr)
+        if (std::strchr(method, 't') != nullptr)
         {
             epsilon = epsilons.data() + coo_num * i;
         }
@@ -108,6 +116,7 @@ void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_di
         SparseVector beta_next;
         SparseVectorView alpha_pre;
         SparseVectorView alpha;
+        std::vector<Real> dense_collector(state);
         Real residual = 0;
         // forward
         for (int t = 0; t < data_size; ++t)
@@ -129,8 +138,10 @@ void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_di
         {
             alpha = gamma.get_row(t);
             alpha_pre = gamma.get_row(t - 1);
-            transit_->mulVM(alpha_pre, alpha);
-            residual += log_normalize(alpha.data, alpha.size);
+            transit_->mulVM(alpha_pre, dense_collector.data());
+            alpha.logsumexp(dense_collector.data());
+            Real scale_val = log_normalize(alpha.data, alpha.size);
+            residual += scale_val;
         }
         //backward
         beta = emit_log_prob.get_row(data_size - 1);
@@ -143,9 +154,10 @@ void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_di
             std::fill_n(beta.data, beta.size, -std::numeric_limits<Real>::infinity());
             alpha_pre = beta;
             alpha = beta_next;
-            transit_->mulMV(alpha, alpha_pre);
+            transit_->mulMV(alpha, dense_collector.data());
+            alpha_pre.logsumexp(dense_collector.data());
             alpha = gamma.get_row(t);
-            if (std::strchr(method_, 't') != nullptr)
+            if (std::strchr(method, 't') != nullptr)
             {
                 transit_->epsilon_E_step(alpha, alpha_pre, epsilon);
             }
@@ -156,7 +168,7 @@ void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_di
         total_residual += residual / data_size;
     }
     // M-step
-    if (std::strchr(method_, 'p') != nullptr)
+    if (std::strchr(method, 'p') != nullptr)
     {
         for (int i = 0; i < datas.size(); ++i)
         {
@@ -168,7 +180,7 @@ void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_di
             }
         }
     }
-    if (std::strchr(method_, 'e') != nullptr)
+    if (std::strchr(method, 'e') != nullptr)
     {
         std::vector<Real> data_all;
         for (int i = 0; i < datas.size(); ++i) {
@@ -178,11 +190,10 @@ void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_di
 #pragma omp parallel for
         for (int k = 0; k < shared_emit_.size(); ++k)
         {
-            std::vector<Real> gamma(data_all.size() / data_dim, -std::numeric_limits<Real>::infinity());
-            Real* gamma_ptr = gamma.data();
             for (int s = 0; s < shared_emit_[k].size(); ++s)
             {
-                std::fill_n(gamma.begin(), data_all.size() / data_dim, -std::numeric_limits<Real>::infinity());
+                std::vector<Real> gamma(data_all.size() / data_dim, -std::numeric_limits<Real>::infinity());
+                Real* gamma_ptr = gamma.data();
                 int j = shared_emit_[k][s];
                 for (int t = 0; t < datas.size(); ++t)
                 {
@@ -196,7 +207,7 @@ void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_di
             }
         }
     }
-    if (std::strchr(method_, 't') != nullptr)
+    if (std::strchr(method, 't') != nullptr)
     {
         transit_->epsilon_M_step(epsilons.data(), datas.size());
     }

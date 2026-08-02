@@ -19,6 +19,9 @@ public:
     SparseVectorView(): data(nullptr), indices(nullptr), size(0) {};
     explicit SparseVectorView(const SparseVector& other);
     SparseVectorView& operator=(const SparseVector& other);
+
+    void logsumexp(const Real* val);
+
     Real* data;
     const int* indices;
     int size;
@@ -67,30 +70,4 @@ public:
     int size;
 private:
     int _capacity;
-};
-
-class DiagMatrix
-{
-  public:
-    DiagMatrix(const int k, const int m, const std::vector<int> &segment, const std::vector<Real> &koff);
-    int k = 0;
-    int m = 0;
-    void MatVecHad(const Real *beta, const Real *b, Real *y);
-    void VecMatHad(const Real *alpha, const Real *b, Real *y);
-    void DiagMatVecHad(const Real *alpha, const Real *b, const Real *beta, Real *y);
-    Real operator()(int i, int j) const
-    {
-        if (j < i || (j - i) >= k || j >= m || i >= m || i < 0 || j < 0)
-            return 0;
-        else
-        {
-            return mat[i][j - i];
-        }
-    }
-    void getcol(const int j, std::vector<int> &idx, std::vector<Real> &val);
-    void getid(const int j, std::vector<int> &idx);
-    void update(const Real *x);
-    std::vector<std::vector<Real>> mat;
-    std::vector<std::vector<Real>> mat_update;
-    std::vector<Real> ytmp;
 };

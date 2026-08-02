@@ -80,6 +80,7 @@ std::vector<T> kmer_current(const std::vector<T>& data, const std::vector<char>&
     return res;
 }
 
+template <typename T>
 void coarse_align(const char* sequence, const int n, const int kmer, const int data_length, const int band_width, std::vector<int>& coo_x, std::vector<int>& coo_y) {
     const std::vector<int> seq = kmer_to_index(sequence, n, kmer);
     const int seq_length = seq.size();
@@ -109,7 +110,7 @@ void coarse_align(const char* sequence, const int n, const int kmer, const int d
     }
 }
 
-void uniform_align(const int sequence_length, const int data_length, const int band_width, std::vector<int>& coo_x, std::vector<int>& coo_y) {
+inline void uniform_align(const int sequence_length, const int data_length, const int band_width, std::vector<int>& coo_x, std::vector<int>& coo_y) {
     if (data_length <= sequence_length) {
         return;
     }
@@ -124,6 +125,45 @@ void uniform_align(const int sequence_length, const int data_length, const int b
         base_id = std::clamp(base_id, 0, sequence_length - 1);
         for (int j = 0; j < band_width; ++j) {
             const int base_id_j = base_id + j - band_width / 2;
+            if (base_id_j < sequence_length && base_id_j >= 0) {
+                coo_y.push_back(base_id_j);
+                coo_x.push_back(i);
+            }
+        }
+    }
+}
+
+inline void mv_align(const int sequence_length, const int* mv, const int data_length, const int band_width, std::vector<int>& coo_x, std::vector<int>& coo_y) {
+    int max_val = std::numeric_limits<int>::min();
+    int min_nonnegative = std::numeric_limits<int>::max();
+    for (int i = 0; i < data_length; i++) {
+        const int v = mv[i];
+        if (v > max_val)
+            max_val = v;
+        if (v >= 0 && v < min_nonnegative)
+            min_nonnegative = v;
+    }
+    const int query_length = max_val - min_nonnegative + 1;
+    coo_x.reserve(data_length * band_width);
+    coo_y.reserve(data_length * band_width);
+    int skip = query_length / sequence_length;
+    if (skip < 1) {
+        skip = 1;
+    }
+    int ref_id = -1;
+    int que_id = 0;
+    int pre_mv = std::numeric_limits<int>::max();
+    for (int i = 0; i < data_length; ++i) {
+        if (mv[i] != pre_mv) {
+            ++que_id;
+            pre_mv = mv[i];
+            if (que_id % skip == 0) {
+                ++ref_id;
+            }
+        }
+        ref_id = std::clamp(ref_id, 0, sequence_length - 1);
+        for (int j = 0; j < band_width; ++j) {
+            const int base_id_j = ref_id + j - band_width / 2;
             if (base_id_j < sequence_length && base_id_j >= 0) {
                 coo_y.push_back(base_id_j);
                 coo_x.push_back(i);

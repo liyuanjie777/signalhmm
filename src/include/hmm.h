@@ -7,14 +7,13 @@
 class HMM
 {
 public:
-    HMM(const std::vector<EmissionModel*>& emit, TransitionModel* transit, std::vector<Real>& prob_pi, const char* method);
-    void EM_step(const std::vector<std::vector<Real>>& datas, const int data_dim);
+    HMM(const std::vector<EmissionModel*>& emit, TransitionModel* transit, std::vector<Real>& prob_pi);
+    void EM_step(const std::vector<std::vector<Real>>& datas, const int data_dim, const char* method, const int max_band, const std::vector<std::vector<int>>& mvs);
     void infer(const std::vector<std::vector<Real>>& datas, std::vector<std::vector<int>>& labels, const int data_dim) const;
-    Real update(Real rate);
+    Real update(Real rate, const char* method);
 
 private:
     void viterbi(const Real* data, int* label, const int n, const int data_dim) const;
-    const char* method_;
     int iter_ = 0;
     float residual_ = 0;
     // external variables

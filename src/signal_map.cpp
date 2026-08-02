@@ -5,62 +5,28 @@
  *  License: MIT
  */
 
-#include <chrono>
 #include <fstream>
-#include <iostream>
-#include <random>
 #include <vector>
-#include "fileio.h"
-#include "mymath.hpp"
-#include "signalmath.hpp"
 #include "hmm_gmm.h"
 
 
 void test() {
-    std::string fn = "/home/yuanjie/Projects/4sU_nanopore/hiPSC-CM-cDNA-IVT_UTP.dat";
-    std::string fn_model = "./model.txt";
-    ReadsFile reads = ReadsFile();
-    reads.load(fn, 100, true);
-    std::string seq;
-    std::vector<Real> data;
-    std::vector<char> mv;
+    std::string fn_data = "/home/yuanjie/Projects/capmod/blaR_cap0.bin";
+    std::string fn_out = "/home/yuanjie/Projects/capmod/blaR_cap0_align.bin";
+    std::string fn_model = "/home/yuanjie/Projects/capmod/blaR_cap0.txt";
+    std::string fn_fa = "/home/yuanjie/Projects/capmod/DNA_tag_103.fa";
     
-    StepFitHMMGMM model(7, 1, "etp");
-    model.preTrain(fn);
-    model.train(3, 10, 0.2);
+    StepFitHMMGMM model;
+    model.loadData(fn_data, false);
+    model.allocateModel(fn_fa, "T7-blaR", 3, 1);
+    model.train(10, 1, 20, 2, 1.0, "et", 41);
     model.saveModel(fn_model);
-    model.infer(10);
-
-
-    for(int i=0; i < 1; i++){
-        reads.read(seq, data, mv);
-        std::vector<Real> data2;
-        std::vector<size_t> batch;
-        std::vector<ChunkInfo> chunk;
-        //reads.readChunk(data2, batch, chunk);
-        MAD(data.data(), data.size());
-        auto a = kmer_to_index(seq.c_str(), seq.size(), 7);
-        
-        std::cout<<seq;
-        std::cout<<seq.size();
-        continue;
-    }
+    model.infer(10, 1, fn_out);
 }
 
 int main()
 {
-    int nstate = 20;
-    std::vector<Real> koff(nstate, 0.01);
-    std::string fn = "/home/yuanjie/Projects/4sU_nanopore/hiPSC-CM-c DNA-IVT_UTP.dat";
-    //std::string fn_save = "/home/yuanjie/Projects/MapSignal/src/test.model";
-    // StepFitHMMGMM model(nstate, 1, koff, "etp");
-    // model.loadData(fn);
-    // model.train(20, 10);
-    // model.saveModel(fn_save);
     test();
-    //StepFitHMMGMM model_test(fn_save);
-    //model_test.loadData(fn);
-    //model_test.infer(10);
 }
 
 // Run program: Ctrl + F5 or Debug > Start Without Debugging menu

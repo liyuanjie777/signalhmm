@@ -16,133 +16,134 @@
 #include <random>
 #include <zstd.h>
 
-std::string read_fa(std::string& fn)
+std::string readFA(const std::string& fn, const std::string& target_chrom)
 {
     std::ifstream infile(fn);
-    if (!infile)
-    {
-        std::cerr << "Cannot open fa file.\n";
+    if (!infile) {
+        std::cerr << "Cannot open fa file: " << fn << "\n";
         return "";
     }
-    std::string line, sequence, seq_id;
-    while (std::getline(infile, line))
-    {
+    std::string line, sequence;
+    std::string current_seq_id = "";
+    bool target_found = false;
+    while (std::getline(infile, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
         if (line.empty())
             continue;
-        if (line[0] == '>')
-        {
-            seq_id = line.substr(1);
+        if (line[0] == '>') {
+            if (target_found) {
+                break;
+            }
+            size_t space_pos = line.find(' ');
+            if (space_pos != std::string::npos) {
+                current_seq_id = line.substr(1, space_pos - 1);
+            } else {
+                current_seq_id = line.substr(1);
+            }
+            if (current_seq_id == target_chrom) {
+                target_found = true;
+            }
         }
-        else
-        {
+        else if (target_found) {
             sequence += line;
         }
     }
     return sequence;
 }
 
-void ReadsFile::load(std::string& fn, int max_cache, bool shuffle)
+void ReadsFile::load(const std::string& fn, bool shuffle)
 {
-    _poss_bytes.clear();
-    _pose_bytes.clear();
-    _uuids.clear();
-    readsNumber = 0;
-    _random_idx.clear();
-    _id_to_uuids.clear();
-    
+    close();
     _filename = fn;
-    _cache_number = max_cache;
-    std::fstream file(_filename, std::ios::binary | std::ios::in);
-    if (!file)
+    _file.open(_filename, std::ios::binary | std::ios::in);
+    if (!_file.is_open())
         return;
-    char uuid[16];
+    const int uuid_length = 36;
+    char uuid[uuid_length];
     int number;
-    while (file.read(uuid, 16))
+    std::vector<char> chrom(100);
+    while (_file.read(uuid, uuid_length))
     {
-        file.read(reinterpret_cast<char*>(&number), sizeof(number));
-        _poss_bytes.push_back(file.tellg());
-        _pose_bytes.push_back(_poss_bytes.back() + number);
-        _uuids[std::string(uuid, 16)] = _poss_bytes.size() - 1;
-        _id_to_uuids.push_back(std::string(uuid, 16));
-        file.seekg(number, std::ios::cur);
+        int chrom_size;
+        _file.read(reinterpret_cast<char*>(&chrom_size), 4);
+        _file.read(chrom.data(), chrom_size);
+        std::string cur_chrom = std::string(chrom.data(), chrom_size);
+        if (_chrom_map.find(cur_chrom) == _chrom_map.end()) {
+            _chrom_map[cur_chrom] = {};
+        }
+
+        _file.read(reinterpret_cast<char*>(&number), sizeof(number));
+        _chrom_map[cur_chrom].poss_bytes.push_back(_file.tellg());
+        _chrom_map[cur_chrom].pose_bytes.push_back(_chrom_map[cur_chrom].poss_bytes.back() + number);
+        _uuids[std::string(uuid, uuid_length)] = _chrom_map[cur_chrom].poss_bytes.size() - 1;
+        _chrom_map[cur_chrom].uuids.push_back(std::string(uuid, uuid_length));
+        _file.seekg(number, std::ios::cur);
     }
-    readsNumber = _uuids.size();
-    _random_idx.resize(readsNumber);
-    for(int i = 0; i < readsNumber; ++i) {
-        _random_idx[i] = i;
+    for (auto& [chrom, idx] : _chrom_map) {
+        int readsNumber = idx.uuids.size();
+        idx.random_idx.resize(readsNumber);
+        for(int i = 0; i < readsNumber; ++i) {
+            idx.random_idx[i] = i;
+        }
+        if (shuffle) {
+            std::mt19937 gen(42);
+            std::shuffle(idx.random_idx.begin(), idx.random_idx.end(), gen);
+        }
+        printf("chrom: %d reads\n", readsNumber);
     }
-    if (shuffle) {
-        std::mt19937 gen(42);
-        std::shuffle(_random_idx.begin(), _random_idx.end(), gen);
-    }
-    printf("ReadsFile: %d reads\n", readsNumber);
+
 }
 
-void ReadsFile::readID(std::string& sequence, std::vector<Real>& data, std::vector<char>& mv, const std::string& uuid)
-{   
-    sequence = "";
-    data.clear();
-    mv.clear();
-    if (_uuids.find(uuid) == _uuids.end()) {
-        return;
+Read ReadsFile::read(const std::string& chrom)
+{
+    Read read_data;
+    read_data.chrom = chrom;
+    ReadIDX& read_idx = _chrom_map[chrom];
+    const int readsNumber = read_idx.uuids.size();
+    if (read_idx.cur_id >= readsNumber) {
+        return read_data;
     }
-    int id = _uuids[uuid];
+    const int id = read_idx.random_idx[read_idx.cur_id];
+    read_idx.cur_id += 1;
     std::fstream file(_filename, std::ios::binary | std::ios::in);
     if (!file)
-        return;
-    size_t start_bytes = _poss_bytes[id];
-    size_t size_bytes = _pose_bytes[id] - start_bytes;
-    if (!(id >= _s && id < _e))
-    {
-        _s = id;
-        _e = id + _cache_number;
-        _e = (_e > readsNumber) ? readsNumber : _e;
-        file.seekg(start_bytes, std::ios::beg);
-        _cache_data.resize(_pose_bytes[_e - 1] - _poss_bytes[_s]);
-        file.read(_cache_data.data(), _cache_data.size());
-    }
-    size_t offset_bytes = start_bytes - _poss_bytes[_s];
-    std::vector<char> odata = decompress(&_cache_data[offset_bytes], size_bytes);
-
-    int seq_size;
-    char* ptr = odata.data();
-    memcpy(&seq_size, ptr, 4);
-    ptr += 4;
-    sequence = std::string(ptr, seq_size);
-    ptr += seq_size;
+        return read_data;
+    read_data.uuid = read_idx.uuids[id];
+    size_t start_bytes = read_idx.poss_bytes[id];
+    size_t size_bytes = read_idx.pose_bytes[id] - start_bytes;
+    file.seekg(start_bytes, std::ios::beg);
+    _cache_data.resize(size_bytes);
+    file.read(_cache_data.data(), _cache_data.size());
+    std::vector<char> odata = decompress(_cache_data.data(), size_bytes);
 
     int data_size;
+    char* ptr = odata.data();
+
+    memcpy(&data_size, ptr, 4);
+    read_data.spos = data_size;
+    ptr += 4;
+    memcpy(&data_size, ptr, 4);
+    read_data.epos = data_size;
+    ptr += 4;
+
     memcpy(&data_size, ptr, 4);
     ptr += 4;
-    std::vector<float> data_float(int(data_size / sizeof(float)));
+    std::vector<float> data_float(static_cast<int>(data_size / sizeof(float)));
     memcpy(data_float.data(), ptr, data_size);
-    data.clear();
     for (auto it: data_float) {
-        data.push_back(it);
+        read_data.data.push_back(it);
     }
     ptr += data_size;
 
-    int mv_size;
-    memcpy(&mv_size, ptr, 4);
+    memcpy(&data_size, ptr, 4);
     ptr += 4;
-    mv.resize(mv_size);
-    memcpy(mv.data(), ptr, mv_size);
-    MAD(data.data(), data.size());
-    return;
-}
-
-void ReadsFile::read(std::string& sequence, std::vector<Real>& data, std::vector<char>& mv)
-{
-    sequence = "";
-    data.clear();
-    mv.clear();
-    if (_glob_id >= readsNumber) {
-        return;
-    }
-    const int id = _random_idx[_glob_id];
-    const std::string uuid = _id_to_uuids[id];
-    _glob_id += 1;
-    readID(sequence, data, mv, uuid);
+    std::vector<int> data_int(static_cast<int>(data_size / sizeof(int)));
+    memcpy(data_int.data(), ptr, data_size);
+    read_data.mv = data_int;
+    ptr += data_size;
+    return read_data;
 }
 
 std::vector<char> ReadsFile::decompress(const char* data, const size_t n)
@@ -161,101 +162,60 @@ std::vector<char> ReadsFile::decompress(const char* data, const size_t n)
     return odata;
 }
 
-void ReadsFile::save(
-    const std::string& fn,
-    const std::string& sequence,
-    const std::vector<Real>& data_Real,
-    const std::vector<char>& mv,
-    const std::string& uuid) {
-    std::vector<float> data(data_Real.size());
-    for (int j = 0; j < data_Real.size(); ++j) {
-        data[j] = data_Real[j];
-    }
+void ReadsFile::save(const std::string& fn, const std::vector<Read>& read_datas) {
     std::fstream ofile(fn, std::ios::binary | std::ios::app | std::ios::out);
-    ofile.write(uuid.data(), 16);
-    size_t original_size = sequence.size() + data.size() * sizeof(float) + mv.size() + 12;
-    std::vector<char> idata(original_size);
+    for (const Read& read_data: read_datas) {
+        std::vector<float> data(read_data.data.size());
+        for (int j = 0; j < read_data.data.size(); ++j) {
+            data[j] = read_data.data[j];
+        }
 
-    char* ptr = idata.data();
-    int size_bytes = sequence.size();
-    memcpy(ptr, &size_bytes, 4);
-    ptr += 4; 
-    memcpy(ptr, sequence.data(), size_bytes);
-    ptr += size_bytes;
+        size_t original_size = read_data.mv.size() * sizeof(int) + data.size() * sizeof(float) + 16;
+        std::vector<char> idata(original_size);
 
-    size_bytes = data.size() * sizeof(float);
-    memcpy(ptr, &size_bytes, 4);
-    ptr += 4;
-    memcpy(ptr, data.data(), size_bytes);
-    ptr += size_bytes;
+        char* ptr = idata.data();
+        int size_bytes = read_data.spos;
+        memcpy(ptr, &size_bytes, 4);
+        ptr += 4;
+        size_bytes = read_data.epos;
+        memcpy(ptr, &size_bytes, 4);
+        ptr += 4;
 
-    size_bytes = mv.size();
-    memcpy(ptr, &size_bytes, 4);
-    ptr += 4;
-    memcpy(ptr, mv.data(), size_bytes);
+        size_bytes = data.size() * sizeof(float);
+        memcpy(ptr, &size_bytes, 4);
+        ptr += 4;
+        memcpy(ptr, data.data(), size_bytes);
+        ptr += size_bytes;
 
-    size_t compressed_bound = ZSTD_compressBound(original_size);
-    std::vector<char> compressed_data(compressed_bound);
-    size_t compressed_size = ZSTD_compress(
-        compressed_data.data(), compressed_bound, idata.data(), original_size, 4);
-    int compressed_size_int = compressed_size;
-    ofile.write(reinterpret_cast<const char*>(&compressed_size_int), sizeof(int));
-    ofile.write(compressed_data.data(), compressed_size);
+        size_bytes = read_data.mv.size() * sizeof(int);
+        memcpy(ptr, &size_bytes, 4);
+        ptr += 4;
+        memcpy(ptr, read_data.mv.data(), size_bytes);
+        ptr += size_bytes;
+
+        size_t compressed_bound = ZSTD_compressBound(original_size);
+        std::vector<char> compressed_data(compressed_bound);
+        size_t compressed_size = ZSTD_compress(compressed_data.data(), compressed_bound, idata.data(), original_size, 4);
+        int compressed_size_int = compressed_size;
+        int chrom_size = read_data.chrom.size();
+        ofile.write(read_data.uuid.data(), read_data.uuid.size());
+        ofile.write(reinterpret_cast<char*>(&chrom_size), 4);
+        ofile.write(read_data.chrom.data(), chrom_size);
+        ofile.write(reinterpret_cast<const char*>(&compressed_size_int), 4);
+        ofile.write(compressed_data.data(), compressed_size);
+    }
+    ofile.close();
     return;
 }
 
-int ReadsFile::readChunk(std::vector<Real>& data, std::vector<size_t>& batchs, std::vector<ChunkInfo>& chunkinfo, int chunk_size, int batch_size, int stride) {
-    data.clear();
-    batchs.clear();
-    batchs.push_back(0);
-    chunkinfo.clear();
-    if (_glob_id >= readsNumber) {
-        return 0;
+std::vector<Read> ReadsFile::readChunk(const int batch, const std::string& chrom) {
+    std::vector<Read> res;
+    for (int i = 0; i < batch; ++i) {
+        Read read_data = read(chrom);
+        if (read_data.data.size() == 0) {
+            continue;
+        }
+        res.push_back(read_data);
     }
-    std::string sequence; 
-    std::vector<Real> read_data;
-    std::vector<char> mv;
-    int read_id;
-    if (_cur_data_i != 0) {
-        _glob_id -= 1;
-        read_id = _random_idx[_glob_id];
-        this->read(sequence, read_data, mv);
-    }
-    int cur_batch = 0; 
-    while(cur_batch < batch_size) {
-        if (read_data.size() == 0) {
-            read_id = _random_idx[_glob_id];
-            this->read(sequence, read_data, mv);
-        }
-        if (read_data.size() == 0) {
-            return 0;
-        }
-        if (_cur_data_i + chunk_size >= read_data.size()) {
-            data.insert(data.end(), read_data.begin() + _cur_data_i, read_data.end());
-            batchs.push_back(data.size());
-            ChunkInfo info = {read_id, _cur_data_i, int(read_data.size())};
-            chunkinfo.push_back(info);
-            read_data.clear();
-            _cur_data_i = 0;
-        }
-        else {
-            const int cur_data_j = _cur_data_i + chunk_size;
-            data.insert(data.end(), read_data.begin() + _cur_data_i, read_data.begin() + cur_data_j);
-            batchs.push_back(data.size());
-            ChunkInfo info = {read_id, _cur_data_i, cur_data_j};
-            chunkinfo.push_back(info);
-            _cur_data_i += stride;
-        }
-        cur_batch += 1;
-    }
-    return 1;
-}
-
-std::string ReadsFile::getSequence(const int id) {
-    std::string sequence;
-    std::vector<Real> data;
-    std::vector<char> mv;
-    const std::string uuid = _id_to_uuids[id];
-    readID(sequence, data, mv, uuid);
-    return sequence;
+    return res;
 }

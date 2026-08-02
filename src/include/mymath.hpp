@@ -39,23 +39,33 @@ template <typename T> void mean_var(const T* sum, const T* sum2, int i, int j, T
     return;
 }
 
-template <typename T> T logsumexp(const T* x, int n)
-{
-    T max_x = *std::max_element(x, x + n);
-    T sum = 0.0;
-    for (int i = 0; i < n; i++)
-    {
+template <typename T>
+T logsumexp(const T* __restrict x, const int n) {
+    if(n==0) {
+        return -std::numeric_limits<T>::infinity();
+    }
+    T max_x = x[0];
+    for(int i = 1;i < n;i++) {
+        if(x[i] > max_x)
+            max_x = x[i];
+    }
+    if(std::isinf(max_x)) {
+        return max_x;
+    }
+    T sum=0;
+    for(int i = 0;i < n;i++) {
         sum += std::exp(x[i] - max_x);
     }
     return max_x + std::log(sum);
 }
 
-template <typename T> T logsumexp2x(const T& x, const T& y)
+template <typename T> T logsumexp2x(T x, T y)
 {
-    if (x > y)
-        return x + std::log1p(std::exp(y - x));
-    else
-        return y + std::log1p(std::exp(x - y));
+    if (x < y)
+        std::swap(x,y);
+    if (std::isinf(x))
+        return x;
+    return x + std::log1p(std::exp(y - x));
 }
 
 template <typename T> T logdiff(const T& x, const T& x2)

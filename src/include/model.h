@@ -21,8 +21,8 @@ public:
     virtual Real log_transition(int i, int j) const = 0;
     virtual SparseVectorView get_row(int i) = 0;
     virtual SparseVectorView get_col(int j) = 0;
-    virtual void mulMV(const SparseVectorView& idata, SparseVectorView& odata) const = 0;
-    virtual void mulVM(const SparseVectorView& idata, SparseVectorView& odata) const = 0;
+    virtual void mulMV(const SparseVectorView& idata, Real* odata) const = 0;
+    virtual void mulVM(const SparseVectorView& idata, Real* odata) const = 0;
     virtual int num_states() const = 0;
     virtual int num_values() const = 0;
     virtual void save(int* x, int* y, Real* val) = 0;

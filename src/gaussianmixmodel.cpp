@@ -7,6 +7,7 @@
 #include "gaussianmixmodel.h"
 #include "mymath.hpp"
 #include <algorithm>
+#include <stdexcept>
 #include <iostream>
 
 GaussianMixModel::GaussianMixModel(int npeak)
@@ -118,17 +119,20 @@ std::vector<Real> GaussianMixModel::save()
     {
         res.push_back(std::exp(log_weights_[k]));
         res.push_back(means_[k]);
-        res.push_back(std::sqrt(vars_[k]));
+        res.push_back(vars_[k]);
     }
     return res;
 }
 
 void GaussianMixModel::setValues(const Real* values, int n)
 {
+    if (n != 6 * npeak_) {
+        throw std::runtime_error("GaussianMixModel::setValues(), length n not match with peak number");
+    }
     for (int k = 0; k < npeak_; ++k)
     {
         log_weights_[k] = std::log(values[k * 3]);
         means_[k] = values[k * 3 + 1];
-        vars_[k] = values[k * 3 + 2] * values[k * 3 + 2];
+        vars_[k] = values[k * 3 + 2];
     }
 }

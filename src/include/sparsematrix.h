@@ -14,7 +14,6 @@ public:
     MixMatrix(const int row, const int col, const Real init_val);
     MixMatrix(const int* x, const int* y, const int num, const int row, const int col, const Real init_val);
     MixMatrix(const MixMatrix& other);
-    ~MixMatrix();
     SparseVectorView get_row(const int i);
     void transpose();
     void set_values(const MixMatrix& src);
