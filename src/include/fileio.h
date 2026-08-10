@@ -8,8 +8,6 @@
 struct Read {
     std::string uuid;
     std::string chrom;
-    int spos;
-    int epos;
     std::vector<Real> data;
     std::vector<int> mv;
 };
@@ -29,7 +27,7 @@ public:
     ReadsFile(){};
     void load(const std::string& fn, bool shuffle);
     Read read(const std::string& chrom);
-    std::vector<Read> readChunk(const int batch, const std::string& chrom);
+    std::vector<Read> readChunk(const int batch, const std::string& chrom, int min_size);
     void close() {
         if (_file.is_open()) {
             _file.close();

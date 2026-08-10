@@ -2,9 +2,30 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <unordered_map>
-#include <vector>
+#include <memory>
 #include <string>
+#include <queue>
+#include <tuple>
+#include <vector>
+
+inline Real min_variance(const Real* data, const int n, const int window) {
+    Real mu = 0.0;
+    Real sd = 0.0;
+    for (int i = 0; i < window; i++) {
+        Real mu_old = mu;
+        mu += (data[i] - mu) / static_cast<Real>(i + 1);
+        sd += (data[i] - mu_old) * (data[i] - mu);
+    }
+    Real min_var = sd;
+    for (int i = window; i < n; i++) {
+        Real mu_old = mu;
+        mu += (data[i] - data[i - window]) / static_cast<Real>(window);
+        sd += (data[i - window] - mu_old) * (data[i - window] - mu) + (data[i] - mu) * (data[i] - mu_old);
+        if (sd < min_var) {
+            min_var = sd;
+        }
+    } return min_var / static_cast<Real>(window);
+}
 
 inline std::vector<int> kmer_to_index(const char* seq, const int n, const int kmer)
 {
@@ -28,6 +49,21 @@ inline std::vector<int> kmer_to_index(const char* seq, const int n, const int km
         codes.push_back(static_cast<int>(code));
     }
     return codes;
+}
+
+inline std::vector<std::string> sequence_to_kmers(const std::string& seq, const int pad_size, const char pad_char, const int kmer_len) {
+    std::string padding_start(pad_size, pad_char);
+    std::string padding_end(kmer_len - pad_size - 1, pad_char);
+    std::string padded_seq = padding_start + seq + padding_end;
+    std::vector<std::string> kmers;
+    if (padded_seq.length() < static_cast<size_t>(kmer_len)) {
+        return kmers;
+    }
+    kmers.reserve(seq.size());
+    for (size_t i = 0; i < seq.size(); ++i) {
+        kmers.push_back(padded_seq.substr(i, kmer_len));
+    }
+    return kmers;
 }
 
 inline std::string index_to_kmer(const int* codes, int n, int kmer)
@@ -146,24 +182,17 @@ inline void mv_align(const int sequence_length, const int* mv, const int data_le
     const int query_length = max_val - min_nonnegative + 1;
     coo_x.reserve(data_length * band_width);
     coo_y.reserve(data_length * band_width);
-    int skip = query_length / sequence_length;
-    if (skip < 1) {
-        skip = 1;
-    }
-    int ref_id = -1;
-    int que_id = 0;
+    float skip = static_cast<float>(sequence_length) / static_cast<float>(query_length);
+    float ref_id = 0.0f;
     int pre_mv = std::numeric_limits<int>::max();
     for (int i = 0; i < data_length; ++i) {
         if (mv[i] != pre_mv) {
-            ++que_id;
             pre_mv = mv[i];
-            if (que_id % skip == 0) {
-                ++ref_id;
-            }
+            ref_id += skip;
         }
-        ref_id = std::clamp(ref_id, 0, sequence_length - 1);
+        const int rid = std::clamp(int(ref_id), 0, sequence_length - 1);
         for (int j = 0; j < band_width; ++j) {
-            const int base_id_j = ref_id + j - band_width / 2;
+            const int base_id_j = rid + j - band_width / 2;
             if (base_id_j < sequence_length && base_id_j >= 0) {
                 coo_y.push_back(base_id_j);
                 coo_x.push_back(i);
@@ -172,3 +201,117 @@ inline void mv_align(const int sequence_length, const int* mv, const int data_le
     }
 }
 
+inline std::vector<int> aggregate_segments(const std::vector<int>& mv, const int sequence_length) {
+    if (mv.empty() || sequence_length <= 0) {
+        return {};
+    }
+    struct Segment {int length; int prev = -1; int next = -1; bool alive = true;};
+    std::vector<Segment> segs;
+    for (int i = 0; i < static_cast<int>(mv.size()); ) {
+        int j = i + 1;
+        while (j < static_cast<int>(mv.size()) && mv[j] == mv[i]) {
+            ++j;
+        }
+        segs.push_back({j - i,static_cast<int>(segs.size()) - 1,static_cast<int>(segs.size()) + 1, true});
+        i = j;
+    }
+    segs.back().next = -1;
+
+    const int N = static_cast<int>(segs.size());
+    if (N <= sequence_length) {
+        std::vector<int> result;
+        result.reserve(mv.size());
+        int id = 0;
+        for (const auto& seg : segs) {
+            for (int i = 0; i < seg.length; ++i) {
+                result.push_back(id);
+            }
+            ++id;
+        }
+        return result;
+    }
+
+    using Node = std::pair<int, int>;
+    std::priority_queue<Node, std::vector<Node>, std::greater<>> heap;
+    for (int i = 0; i < N; ++i) {
+        heap.emplace(segs[i].length, i);
+    }
+    int count = N;
+    while (count > sequence_length) {
+        auto [len, idx] = heap.top();
+        heap.pop();
+        if (!segs[idx].alive || segs[idx].length != len) {
+            continue;
+        }
+
+        const int left  = segs[idx].prev;
+        const int right = segs[idx].next;
+        int target;
+        if (left == -1) {
+            target = right;
+        }
+        else if (right == -1) {
+            target = left;
+        }
+        else {
+            if (segs[left].length <= segs[right].length)
+                target = left;
+            else
+                target = right;
+        }
+        if (target == left) {
+            segs[left].length += segs[idx].length;
+            segs[left].next = segs[idx].next;
+            if (segs[idx].next != -1)
+                segs[segs[idx].next].prev = left;
+            segs[idx].alive = false;
+            heap.emplace(segs[left].length, left);
+        }
+        else {
+            segs[right].length += segs[idx].length;
+            segs[right].prev = segs[idx].prev;
+            if (segs[idx].prev != -1)
+                segs[segs[idx].prev].next = right;
+            segs[idx].alive = false;
+            heap.emplace(segs[right].length,right);
+        }
+        --count;
+    }
+
+    std::vector<int> result;
+    result.reserve(mv.size());
+    int idx = 0;
+    while (idx < N && !segs[idx].alive)
+        ++idx;
+    int new_id = 0;
+    while (idx != -1) {
+        for (int i = 0; i < segs[idx].length; ++i)
+            result.push_back(new_id);
+        idx = segs[idx].next;
+        ++new_id;
+    }
+    return result;
+}
+
+inline std::vector<std::vector<int>> compute_adj_list(const std::vector<std::vector<int>>& expand_seq, const std::vector<int>& mv, const int band_width) {
+    const int sequence_length = expand_seq.size();
+    const int data_length = mv.size();
+    const std::vector<int> mv_agg = aggregate_segments(mv, sequence_length);
+
+    std::vector<std::vector<int>> adj_list(data_length);
+    for (int i = 0; i < data_length; ++i) {
+        adj_list[i].reserve((band_width * 2 + 1) * expand_seq[0].size());
+    }
+    for (int i = 0; i < data_length; ++i) {
+        int j = mv_agg[i];
+        const int start = std::clamp(j - band_width, 0, sequence_length - 1);
+        const int end = std::clamp(j + band_width, 0, sequence_length - 1);
+        for (int k = start; k <= end; ++k) {
+            for (int m = 0; m < expand_seq[k].size(); ++m) {
+                adj_list[i].push_back(expand_seq[k][m]);
+            }
+        }
+        std::sort(adj_list[i].begin(), adj_list[i].end());
+    }
+    return adj_list;
+}

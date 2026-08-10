@@ -19,8 +19,7 @@ MixMatrix::MixMatrix(const int* x, const int* y, const int num, const int row, c
     _val(num, init_val), _indices_csr(num, 0), _ptr_csr(row + 1, 0) {
     std::vector<int> idx(num);
     std::vector<int> x_sort(num);
-    for (int i = 0; i < num; ++i)
-    {
+    for (int i = 0; i < num; ++i) {
         idx[i] = i;
     }
     std::sort(idx.begin(), idx.end(),
@@ -30,14 +29,12 @@ MixMatrix::MixMatrix(const int* x, const int* y, const int num, const int row, c
                 return x[i] < x[j];
             return y[i] < y[j];
         });
-    for (int i = 0; i < num; ++i)
-    {
+    for (int i = 0; i < num; ++i) {
         x_sort[i] = x[idx[i]];
         _indices_csr[i] = y[idx[i]];
         _ptr_csr[x[idx[i]] + 1]++;
     }
-    for (int i = 0; i < _row; ++i)
-    {
+    for (int i = 0; i < _row; ++i) {
         _ptr_csr[i + 1] += _ptr_csr[i];
     }
 }

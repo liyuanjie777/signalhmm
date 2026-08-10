@@ -1,0 +1,12 @@
+# history code
+v0/
+
+# compile output
+outputs/
+cmake-build-debug/
+cmake-build-release/
+build/
+.cache/
+
+# ide format
+.clang-format

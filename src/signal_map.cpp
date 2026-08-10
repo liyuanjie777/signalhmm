@@ -7,26 +7,64 @@
 
 #include <fstream>
 #include <vector>
+#include <chrono>
+#include <iostream>
+#include <iomanip>
+#include <omp.h>
+#include <ctime>
 #include "hmm_gmm.h"
 
+void predict() {
+    std::string fn_data = "/home/yuanjie/Projects/capmod/20260615_AR_cap_blaR.bin";
+    std::string fn_json = "/home/yuanjie/Projects/4sU_nanopore/multichain.json";
+    std::string fn_out = "/home/yuanjie/Projects/4sU_nanopore/multichain_train.json";
 
-void test() {
-    std::string fn_data = "/home/yuanjie/Projects/capmod/blaR_cap0.bin";
-    std::string fn_out = "/home/yuanjie/Projects/capmod/blaR_cap0_align.bin";
-    std::string fn_model = "/home/yuanjie/Projects/capmod/blaR_cap0.txt";
-    std::string fn_fa = "/home/yuanjie/Projects/capmod/DNA_tag_103.fa";
-    
     StepFitHMMGMM model;
-    model.loadData(fn_data, false);
-    model.allocateModel(fn_fa, "T7-blaR", 3, 1);
-    model.train(10, 1, 20, 2, 1.0, "et", 41);
-    model.saveModel(fn_model);
-    model.infer(10, 1, fn_out);
+    model.loadModel(fn_json);
+    model.segment(fn_data, 10, "",fn_out);
+    //std::vector<std::string> uuids;
+    //std::vector<Real> yreal;
+    //std::vector<Real> ypredict;
+    //std::ofstream fout("result.tsv");
+    //if (!fout.is_open()) {
+    //    throw std::runtime_error("Cannot open result.tsv");
+    //}
+    //fout << "uuid\tyreal\typredict\n";
+    //size_t n = std::min({uuids.size(), yreal.size(), ypredict.size()});
+    //for (size_t i = 0; i < n; ++i) {
+    //    fout << uuids[i] << '\t'
+    //         << std::setprecision(10) << yreal[i] << '\t'
+    //         << std::setprecision(10) << ypredict[i] << '\n';
+    //}
+    //fout.close();
 }
 
-int main()
-{
-    test();
+void train() {
+    std::string fn_data = "/home/yuanjie/Projects/capmod/20260615_AR_cap_blaR.bin";
+    std::string fn_out_data = "/home/yuanjie/Projects/capmod/20260615_AR_cap_blaR_hmm.bin";
+    std::string fn_json = "/home/yuanjie/Projects/4sU_nanopore/chain.json";
+    std::string fn_out = "/home/yuanjie/Projects/4sU_nanopore/chain_train.json";
+    
+    StepFitHMMGMM model;
+    model.loadModel(fn_out);
+    model.train(fn_data, 20, "", 50, 1500,  "te", 20);
+    model.saveModel(fn_out);
+    model.infer(fn_data, 10, "", fn_out_data);
+}
+
+int main() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+    std::tm local_time;
+    localtime_r(&now_c, &local_time);
+    std::cout << "HMM: " << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S") << std::endl;
+    std::cout << "Active Threads: " << omp_get_num_threads() << std::endl;
+    train();
+    now = std::chrono::system_clock::now();
+    now_c = std::chrono::system_clock::to_time_t(now);
+    local_time;
+    localtime_r(&now_c, &local_time);
+    std::cout << "Finish: " << std::put_time(&local_time, "%Y-%m-%d %H:%M:%S") << std::endl;
 }
 
 // Run program: Ctrl + F5 or Debug > Start Without Debugging menu

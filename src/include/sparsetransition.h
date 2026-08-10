@@ -11,16 +11,16 @@ public:
     void save(int* x, int* y, Real* val) override;
     void fill(const int* x, const int* y, const Real* val, const int num, const int dim) override;
 
-    Real log_transition(int i, int j) const override;
-    SparseVectorView get_row(int i) override;
-    SparseVectorView get_col(int j) override;
+    Real transition(const int i, const int j) const override;
+    SparseVectorView get_row(const int i) override;
+    SparseVectorView get_col(const int j) override;
     void mulMV(const SparseVectorView& idata, Real* odata) const override;
     void mulVM(const SparseVectorView& idata, Real* odata) const override;
     int num_states() const override { return dim_; };
     int num_values() const override { return num_; };
     void epsilon_E_step(const SparseVectorView& alpha, const SparseVectorView& beta, Real* odata) const override;
-    void epsilon_M_step(const Real* idata, int n) override;
-    void update(Real alpha) override;
+    void epsilon_M_step(const Real* idata, const int n) override;
+    void update() override;
 
 private:
     void normalize();

@@ -10,7 +10,7 @@ public:
     void log_emission(const Real* obs, Real* log_probs, int num) const override;
     void score(const Real* obs, Real* log_probs, int num) const override;
     void update(Real alpha) override;
-    void log_accumulate(const Real* x, const Real* gamma, int n) override;
+    void accumulate(const Real* x, const Real* gamma, int n) override;
     std::vector<Real> save();
 
 private:

@@ -8,23 +8,24 @@ class StepFitHMMGMM
 public:
     ~StepFitHMMGMM() { clear(); };
     void clear();
-    void loadData(const std::string& fn, const bool shuffle) { _readsfile.load(fn, shuffle); };
-    void allocateModel(const std::string& fn_fa, const std::string& chrom, const int extend_number, const int peak);
-    void loadModel(const std::string& fn_model, const std::string& fn_fa, const std::string& chrom, const int extend_number, const int peak);
-    void saveModel(std::string& fn) const;
-    void train(const int batch, const int data_dim, const int max_iter, const int sampling, const Real rate, const char* method, const int max_band);
-    void infer(const int batch, const int data_dim, const std::string& fn_out);
+    void loadModel(const std::string& fn_json);
+    void saveModel(const std::string& fn_json_write) const;
+    void train(const std::string& fn_data, const int batch, const std::string& chrom, const int max_iter, const int sampling, const char* method, const int max_band);
+    void infer(const std::string& fn_data, const int batch, const std::string& chrom, const std::string& fn_out);
+    void segment(const std::string& fn_data, const int batch, const std::string& chrom, const std::string& fn_out);
+    void score(const std::string& fn_data, const int batch, const std::string& chrom, std::vector<std::string>& id, std::vector<Real>& label_real, std::vector<Real>& label_predict);
 
 private:
     int _state_number;
-    int _extend_number;
-    int _peak;
-    ReadsFile _readsfile;
-    std::string _sequence;
-    std::string _chrom;
+    int _data_dim;
+    std::unordered_map<std::string, std::vector<std::vector<int>>> _expand_seq;
 
     HMM* _hmm_model = nullptr;
     TransitionModel* _transition = nullptr;
     std::vector<EmissionModel*> _emission;
+    std::vector<int> _id2seq_id;
+    std::vector<std::string> _id2label;
+    std::unordered_map<std::string, EmissionModel*> _kmer_map;
     std::vector<Real> _init_prob;
+    std::string _fn_src_json;
 };

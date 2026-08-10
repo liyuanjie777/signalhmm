@@ -12,14 +12,14 @@ SparseTransition::SparseTransition(const int* x, const int* y, const Real* val, 
 {
     dim_ = dim;
     num_ = num;
-    val_csr.resize(num, 0);
-    val_csc.resize(num, 0);
-    indices_csr.resize(num, 0);
-    indices_csc.resize(num, 0);
-    csr_csc_map.resize(num, 0);
-    ptr_csr.resize(dim + 1, 0);
-    ptr_csc.resize(dim + 1, 0);
-    cache_.resize(num, -std::numeric_limits<Real>::infinity());
+    val_csr.assign(num, 0);
+    val_csc.assign(num, 0);
+    indices_csr.assign(num, 0);
+    indices_csc.assign(num, 0);
+    csr_csc_map.assign(num, 0);
+    ptr_csr.assign(dim + 1, 0);
+    ptr_csc.assign(dim + 1, 0);
+    cache_.assign(num, -std::numeric_limits<Real>::infinity());
 
     std::vector<int> idx(num);
     std::vector<int> x_sort(num);
@@ -57,25 +57,23 @@ SparseTransition::SparseTransition(const int* x, const int* y, const Real* val, 
                 return indices_csr[i] < indices_csr[j];
             return x_sort[i] < x_sort[j];
         });
-    for (int i = 0; i < num; ++i)
-    {
+    for (int i = 0; i < num; ++i) {
         val_csc[i] = val_csr[idx[i]];
         indices_csc[i] = x_sort[idx[i]];
         ptr_csc[indices_csr[idx[i]] + 1]++;
         csr_csc_map[idx[i]] = i;
     }
-    for (int i = 0; i < dim; ++i)
-    {
+    for (int i = 0; i < dim; ++i) {
         ptr_csc[i + 1] += ptr_csc[i];
     }
     normalize();
 }
 
-Real SparseTransition::log_transition(int i, int j) const
+Real SparseTransition::transition(const int i, const int j) const
 {
     int start = ptr_csr[i];
     int end = ptr_csr[i + 1];
-    Real res = -std::numeric_limits<Real>::infinity();
+    Real res = 0;
     for (int col = start; col < end; ++col)
     {
         if (indices_csr[col] == j)
@@ -141,13 +139,10 @@ void SparseTransition::mulVM(const SparseVectorView& idata, Real* odata) const {
     }
 }
 
-void SparseTransition::epsilon_M_step(const Real* idata, int n)
-{
-    for (size_t i = 0; i < num_; ++i)
-    {
+void SparseTransition::epsilon_M_step(const Real* idata, const int n) {
+    for (size_t i = 0; i < num_; ++i) {
         std::vector<Real> tmp(n);
-        for (size_t j = 0; j < n; ++j)
-        {
+        for (size_t j = 0; j < n; ++j) {
             tmp[j] = idata[j * num_ + i];
         }
         cache_[i] = logsumexp2x(cache_[i], logsumexp(tmp.data(), n));
@@ -156,8 +151,9 @@ void SparseTransition::epsilon_M_step(const Real* idata, int n)
 
 void SparseTransition::epsilon_E_step(const SparseVectorView& alpha, const SparseVectorView& beta, Real* odata) const
 {
-    std::vector<Real> tmp(num_, -std::numeric_limits<Real>::infinity());
-    std::copy_n(val_csr.data(), num_, tmp.data());
+    thread_local std::vector<Real> tmp;
+    tmp.resize(num_);
+    std::fill_n(tmp.begin(), tmp.size(), -std::numeric_limits<Real>::infinity());
     for (int i = 0;i < alpha.size; ++i) {
         const int i_dense = alpha.indices[i];
         const int start = ptr_csr[i_dense];
@@ -172,33 +168,24 @@ void SparseTransition::epsilon_E_step(const SparseVectorView& alpha, const Spars
                 break;
             }
             if (indices_csr[pointer] == j_dense) {
-                tmp[pointer] += alpha.data[i] + beta.data[j];
+                tmp[pointer] = val_csr[pointer] + alpha.data[i] + beta.data[j];
             }
         }
     }
     log_normalize(tmp.data(), tmp.size());
-    for (int i = 0; i < num_; ++i)
-    {
+    for (int i = 0; i < num_; ++i) {
         odata[i] = logsumexp2x(odata[i], tmp[i]);
     }
 }
 
 void SparseTransition::normalize()
 {
-    std::vector<Real> res;
     for (int i = 0; i < dim_; ++i)
     {
-        res.clear();
         const int start = ptr_csr[i];
         const int end = ptr_csr[i + 1];
-        for (int col = start; col < end; ++col)
-        {
-            res.push_back(val_csr[col]);
-        }
-        if (res.size() > 0)
-        {
-            log_normalize(res.data(), res.size());
-            memcpy(&val_csr[start], res.data(), res.size() * sizeof(Real));
+        if (end - start > 0) {
+            log_normalize(&val_csr[start], end - start);
         }
     }
     for (int i = 0; i < num_; ++i)
@@ -207,11 +194,9 @@ void SparseTransition::normalize()
     }
 }
 
-void SparseTransition::update(Real alpha)
-{
-    for (size_t i = 0; i < num_; ++i)
-    {
-        val_csr[i] = logsumexp2x(std::log(Real(1.0) - alpha) + val_csr[i], std::log(alpha) + cache_[i]);
+void SparseTransition::update() {
+    for (size_t i = 0; i < num_; ++i) {
+        val_csr[i] = cache_[i];
     }
     normalize();
     cache_.assign(num_, -std::numeric_limits<Real>::infinity());
@@ -234,19 +219,18 @@ void SparseTransition::fill(const int* x, const int* y, const Real* val, const i
 {
     dim_ = dim;
     num_ = num;
-    val_csr.resize(num, 0);
-    val_csc.resize(num, 0);
-    indices_csr.resize(num, 0);
-    indices_csc.resize(num, 0);
-    csr_csc_map.resize(num, 0);
-    ptr_csr.resize(dim + 1, 0);
-    ptr_csc.resize(dim + 1, 0);
-    cache_.resize(num, -std::numeric_limits<Real>::infinity());
+    val_csr.assign(num, 0);
+    val_csc.assign(num, 0);
+    indices_csr.assign(num, 0);
+    indices_csc.assign(num, 0);
+    csr_csc_map.assign(num, 0);
+    ptr_csr.assign(dim + 1, 0);
+    ptr_csc.assign(dim + 1, 0);
+    cache_.assign(num, -std::numeric_limits<Real>::infinity());
 
     std::vector<int> idx(num);
     std::vector<int> x_sort(num);
-    for (int i = 0; i < num; ++i)
-    {
+    for (int i = 0; i < num; ++i) {
         idx[i] = i;
     }
     std::sort(idx.begin(), idx.end(),
@@ -256,20 +240,17 @@ void SparseTransition::fill(const int* x, const int* y, const Real* val, const i
                 return x[i] < x[j];
             return y[i] < y[j];
         });
-    for (int i = 0; i < num; ++i)
-    {
+    for (int i = 0; i < num; ++i) {
         val_csr[i] = std::log(val[idx[i]]);
         x_sort[i] = x[idx[i]];
         indices_csr[i] = y[idx[i]];
         ptr_csr[x[idx[i]] + 1]++;
     }
-    for (int i = 0; i < dim; ++i)
-    {
+    for (int i = 0; i < dim; ++i) {
         ptr_csr[i + 1] += ptr_csr[i];
     }
 
-    for (int i = 0; i < num; ++i)
-    {
+    for (int i = 0; i < num; ++i) {
         idx[i] = i;
     }
     std::sort(idx.begin(), idx.end(),
@@ -286,8 +267,7 @@ void SparseTransition::fill(const int* x, const int* y, const Real* val, const i
         ptr_csc[indices_csr[idx[i]] + 1]++;
         csr_csc_map[idx[i]] = i;
     }
-    for (int i = 0; i < dim; ++i)
-    {
+    for (int i = 0; i < dim; ++i) {
         ptr_csc[i + 1] += ptr_csc[i];
     }
     normalize();

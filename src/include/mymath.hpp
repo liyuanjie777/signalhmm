@@ -40,7 +40,7 @@ template <typename T> void mean_var(const T* sum, const T* sum2, int i, int j, T
 }
 
 template <typename T>
-T logsumexp(const T* __restrict x, const int n) {
+T logsumexp(const T* x, const int n) {
     if(n==0) {
         return -std::numeric_limits<T>::infinity();
     }
@@ -75,19 +75,22 @@ template <typename T> T logdiff(const T& x, const T& x2)
     return var;
 }
 
-template <typename T> T log_normalize(T* x, int n)
-{
-    T max_x = *std::max_element(x, x + n);
+template <typename T> T log_normalize(T* x, int n) {
+    T max_x = x[0];
+    for(int i = 1;i < n;i++) {
+        if(x[i] > max_x)
+            max_x = x[i];
+    }
+    if(std::isinf(max_x)) {
+        return max_x;
+    }
     T sum = 0.0;
-    for (int i = 0; i < n; i++)
-    {
+    for (int i = 0; i < n; i++) {
         sum += std::exp(x[i] - max_x);
     }
     T val = max_x + std::log(sum);
-    for (int i = 0; i < n; i++)
-    {
+    for (int i = 0; i < n; i++) {
         x[i] -= val;
-
     }
     return val;
 }
@@ -97,6 +100,22 @@ template <typename T> void vec_add(T* y, const T* x, const int n)
     for (int i = 0; i < n; i++)
     {
         y[i] += x[i];
+    }
+}
+
+
+template <typename T> void vec_add(T* y, const T x, const int n) {
+    for (int i = 0; i < n; i++) {
+        y[i] += x;
+    }
+}
+
+
+template <typename T> void vec_scale(T* y, const T x, const int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        y[i] *= x;
     }
 }
 
@@ -159,14 +178,20 @@ template <typename T> void norm_data(T* x, const int n, T& mu, T& sigma)
     return;
 }
 
-template <typename T> T normalize(T* x, const int n)
-{
-    T sum = vec_sum(x, n);
-    if (sum == 0)
-        return 1e-30;
-    for (int i = 0; i < n; ++i)
-    {
-        x[i] /= sum;
+template <typename T>
+T vec_norm(T* x, const int n) {
+    if (n <= 0) return 0;
+    T sum = 0;
+    for (int i = 0; i < n; ++i) {
+        sum += x[i];
+    }
+    if (sum == static_cast<T>(0)) {
+        return static_cast<T>(0);
+    }
+    T inv_sum = static_cast<T>(1) / sum;
+
+    for (int i = 0; i < n; ++i) {
+        x[i] *= inv_sum;
     }
     return sum;
 }
@@ -236,4 +261,37 @@ void MAD(T* data, const int n)
         data[i] = (data[i] - med) / (1.4826 * mad_med);
     }
     return;
+}
+
+template <typename T>
+std::vector<T> sliding_mean_std(const T* data, const int n, const int window) {
+    std::vector<T> res(n * 2, 0.0);
+    const int half = window / 2;
+    T mean = 0;
+    T m2 = 0;
+    T delta = 0;
+    for (int i = 0; i < window; ++i) {
+        delta = data[i] - mean;
+        mean += delta / T(i + 1);
+        m2 += delta * (data[i] - mean);
+    }
+    res[0] = data[0];
+    res[1] = std::sqrt(m2 / T(window));
+    for (int i = 1; i <= half; ++i) {
+        res[i * 2] = data[i];
+        res[i * 2 + 1] = res[1];
+    }
+    for (int i = half + 1; i < n - half; ++i) {
+        T mean_old = mean;
+        mean += (data[i + half] - data[i - half - 1]) / T(window);
+        m2 += (data[i + half] - mean_old) * (data[i + half] - mean)
+        - (data[i - half - 1] - mean_old) * (data[i - half - 1] - mean);
+        res[i * 2] = data[i];
+        res[i * 2 + 1] = std::sqrt(m2 / T(window));
+    }
+    for (int i = n - half; i < n; ++i) {
+        res[i * 2] = data[i];
+        res[i * 2 + 1] = res[2 * (n - half - 1) + 1];
+    }
+    return res;
 }

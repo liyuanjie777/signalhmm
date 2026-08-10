@@ -6,10 +6,7 @@
 
 class SparseVector;
 class SparseVectorView;
-using Real = float;
-using Mat = Eigen::Matrix<Real, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
-using Vec = Eigen::Matrix<Real, Eigen::Dynamic, 1>;
-using ChunkInfo = std::array<int, 3>;
+using Real = double;
 constexpr double PI = 3.14159265358979323846;
 constexpr double MINVAL = 1e-12;
 
@@ -19,9 +16,8 @@ public:
     SparseVectorView(): data(nullptr), indices(nullptr), size(0) {};
     explicit SparseVectorView(const SparseVector& other);
     SparseVectorView& operator=(const SparseVector& other);
-
-    void logsumexp(const Real* val);
-
+    void add(const Real* val);
+    void set(const Real* val);
     Real* data;
     const int* indices;
     int size;

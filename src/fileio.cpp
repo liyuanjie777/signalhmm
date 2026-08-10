@@ -100,7 +100,7 @@ Read ReadsFile::read(const std::string& chrom)
 {
     Read read_data;
     read_data.chrom = chrom;
-    ReadIDX& read_idx = _chrom_map[chrom];
+    ReadIDX& read_idx = _chrom_map[read_data.chrom];
     const int readsNumber = read_idx.uuids.size();
     if (read_idx.cur_id >= readsNumber) {
         return read_data;
@@ -120,13 +120,6 @@ Read ReadsFile::read(const std::string& chrom)
 
     int data_size;
     char* ptr = odata.data();
-
-    memcpy(&data_size, ptr, 4);
-    read_data.spos = data_size;
-    ptr += 4;
-    memcpy(&data_size, ptr, 4);
-    read_data.epos = data_size;
-    ptr += 4;
 
     memcpy(&data_size, ptr, 4);
     ptr += 4;
@@ -174,14 +167,7 @@ void ReadsFile::save(const std::string& fn, const std::vector<Read>& read_datas)
         std::vector<char> idata(original_size);
 
         char* ptr = idata.data();
-        int size_bytes = read_data.spos;
-        memcpy(ptr, &size_bytes, 4);
-        ptr += 4;
-        size_bytes = read_data.epos;
-        memcpy(ptr, &size_bytes, 4);
-        ptr += 4;
-
-        size_bytes = data.size() * sizeof(float);
+        int size_bytes = data.size() * sizeof(float);
         memcpy(ptr, &size_bytes, 4);
         ptr += 4;
         memcpy(ptr, data.data(), size_bytes);
@@ -208,11 +194,24 @@ void ReadsFile::save(const std::string& fn, const std::vector<Read>& read_datas)
     return;
 }
 
-std::vector<Read> ReadsFile::readChunk(const int batch, const std::string& chrom) {
+std::vector<Read> ReadsFile::readChunk(const int batch, const std::string& chrom, int min_size) {
+    std::vector<std::string> keys;
+    keys.reserve(_chrom_map.size());
+    for (const auto& pair : _chrom_map) {
+        keys.push_back(pair.first);
+    }
+    int num_keys = keys.size();
     std::vector<Read> res;
     for (int i = 0; i < batch; ++i) {
-        Read read_data = read(chrom);
-        if (read_data.data.size() == 0) {
+        std::string key;
+        if (chrom.empty()) {
+            key = keys[i % num_keys];
+        }
+        else {
+            key = chrom;
+        }
+        Read read_data = read(key);
+        if (read_data.data.size() < min_size) {
             continue;
         }
         res.push_back(read_data);

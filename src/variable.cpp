@@ -27,9 +27,16 @@ SparseVectorView& SparseVectorView::operator=(const SparseVector& other) {
     return *this;
 }
 
-void SparseVectorView::logsumexp(const Real* val) {
+void SparseVectorView::add(const Real* val) {
     for (int i = 0; i < size; i++) {
         const int j = indices[i];
-        data[i] = logsumexp2x(data[i], val[j]);
+        data[i] += val[j];
+    }
+}
+
+void SparseVectorView::set(const Real* val) {
+    for (int i = 0; i < size; i++) {
+        const int j = indices[i];
+        data[i] = val[j];
     }
 }

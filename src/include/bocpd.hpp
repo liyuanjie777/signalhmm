@@ -6,62 +6,34 @@
 #include <cmath>
 #include <cstring>
 
-Real log_student_t_predictive(Real* sum, Real* sum2, const Real xt, const int i, const int j,
-    const Real mu0, const Real kappa0, const Real alpha0, const Real beta0)
-{
-    Real PI = 3.14159265358979323846;
-    Real n = j - i;
-    if (n == 0)
-    {
-        Real nu0 = 2.0 * alpha0;
-        Real scale2 = beta0 * (kappa0 + 1.0) / (alpha0 * kappa0);
-        Real logt1 = std::lgamma((nu0 + 1.0) / 2.0) - std::lgamma(nu0 / 2.0);
-        Real logt2 = -0.5 * std::log(nu0 * PI * scale2);
-        Real logt3 = -((nu0 + 1.0) / 2.0) * std::log(1.0 + std::pow(xt - mu0, 2) / (nu0 * scale2));
-        return logt1 + logt2 + logt3;
+Real bocpd_log_prob(const Real * sum, const Real * sum2, const int i, const int j) {
+    const int n = j - i;
+    if (n <= 0) {
+        return 0;
     }
-    Real mean = (sum[j] - sum[i]) / n;
-    Real var = (sum2[j] - sum2[i]) / n - mean * mean;
-    var = std::max(var, static_cast<Real>(1e-8));
-    Real kappa_n = kappa0 + n;
-    Real alpha_n = alpha0 + n / 2.0;
-    Real beta_n = beta0 + 0.5 * var * n + (kappa0 * n * std::pow(mean - mu0, 2)) / (2.0 * kappa_n);
-    Real mu_n = (kappa0 * mu0 + n * mean) / kappa_n;
-    Real nu_n = 2.0 * alpha_n;
-    Real scale2 = beta_n * (kappa_n + 1) / (alpha_n * kappa_n);
-    Real logt1 = std::lgamma((nu_n + 1.0) / 2.0) - std::lgamma(nu_n / 2.0);
-    Real logt2 = -0.5 * std::log(nu_n * PI * scale2);
-    Real logt3 = -((nu_n + 1.0) / 2.0) * std::log(1.0 + std::pow(xt - mu_n, 2) / (nu_n * scale2));
-    return logt1 + logt2 + logt3;
+    const Real s = sum[j] - sum[i];
+    const Real q = sum2[j] - sum2[i];
+    const Real mean = s / n;
+    const Real var = q / n - mean * mean;
+    return -static_cast<Real>(0.5) * n * std::log(static_cast<Real>(2.0) * M_PI * M_E * var);
 }
 
-void BOCPD(const std::vector<Real>& x, std::vector<int>& path, const Real koff,
-    const int max_run_length = 500, const int window_size = 10)
-{
+void BOCPD(const std::vector<Real>& x, std::vector<int>& path, const std::vector<std::pair<Real, Real>>& hazard_table, const int max_run_length = 200, const int window_size = 10) {
     // log harzard function
     int n = x.size();
-    Real alpha = 3;
-    Real kappa = window_size;
-    Real log_stay = std::log(1 - koff);
-    Real log_change = std::log(koff);
-    int skip = window_size;
     int N = (n + 1) * (max_run_length + 1);
     std::vector<Real> s1(n + 1);
     std::vector<Real> s2(n + 1);
     std::vector<Real> logpr(N);
     std::vector<Real> logpr_break(n);
-    std::vector<Real> mu0(n);
-    std::vector<Real> beta0(n);
 
     s1[0] = 0;
     s2[0] = 0;
-    for (int i = 0; i < n; i++)
-    {
+    for (int i = 0; i < n; i++) {
         s1[i + 1] = x[i] + s1[i];
         s2[i + 1] = x[i] * x[i] + s2[i];
     }
-    for (int i = 0; i < n; i++)
-    {
+    for (int i = 0; i < n; i++) {
         if (i + skip < n)
         {
             mu0[i] = (s1[i + skip] - s1[i]) / skip;
@@ -76,9 +48,8 @@ void BOCPD(const std::vector<Real>& x, std::vector<int>& path, const Real koff,
         }
     }
     logpr[0] = 0.0;
-    for (size_t i = 1; i <= n; ++i)
-    {
-        size_t id = i * (max_run_length + 1);
+    for (int i = 1; i <= n; ++i) {
+        int id = i * (max_run_length + 1);
         size_t id_pre = (i - 1) * (max_run_length + 1);
         size_t max_i = (i <= max_run_length) ? i : max_run_length;
         Real likeli_change = log_student_t_predictive(s1.data(), s2.data(), x[i - 1], int(i - 1),

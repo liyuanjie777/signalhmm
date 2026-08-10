@@ -75,7 +75,7 @@ void HistogramModel::update(Real alpha)
     return;
 }
 
-void HistogramModel::log_accumulate(const Real* obs, const Real* gamma, int num)
+void HistogramModel::accumulate(const Real* obs, const Real* gamma, int num)
 {
     for (int i = 0; i < num; ++i)
     {
