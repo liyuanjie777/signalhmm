@@ -58,8 +58,9 @@ void ReadsFile::load(const std::string& fn, bool shuffle)
     close();
     _filename = fn;
     _file.open(_filename, std::ios::binary | std::ios::in);
-    if (!_file.is_open())
-        return;
+    if (!_file.is_open()) {
+        throw std::runtime_error("Cannot open file: " + _filename);
+    }
     const int uuid_length = 36;
     char uuid[uuid_length];
     int number;
@@ -69,50 +70,40 @@ void ReadsFile::load(const std::string& fn, bool shuffle)
         int chrom_size;
         _file.read(reinterpret_cast<char*>(&chrom_size), 4);
         _file.read(chrom.data(), chrom_size);
-        std::string cur_chrom = std::string(chrom.data(), chrom_size);
-        if (_chrom_map.find(cur_chrom) == _chrom_map.end()) {
-            _chrom_map[cur_chrom] = {};
-        }
-
+        auto cur_chrom = std::string(chrom.data(), chrom_size);
+        _chroms.push_back(cur_chrom);
         _file.read(reinterpret_cast<char*>(&number), sizeof(number));
-        _chrom_map[cur_chrom].poss_bytes.push_back(_file.tellg());
-        _chrom_map[cur_chrom].pose_bytes.push_back(_chrom_map[cur_chrom].poss_bytes.back() + number);
-        _uuids[std::string(uuid, uuid_length)] = _chrom_map[cur_chrom].poss_bytes.size() - 1;
-        _chrom_map[cur_chrom].uuids.push_back(std::string(uuid, uuid_length));
+        _poss_bytes.push_back(_file.tellg());
+        _pose_bytes.push_back(_poss_bytes.back() + number);
+        _uuids.push_back(std::string(uuid, uuid_length));
         _file.seekg(number, std::ios::cur);
     }
-    for (auto& [chrom, idx] : _chrom_map) {
-        int readsNumber = idx.uuids.size();
-        idx.random_idx.resize(readsNumber);
-        for(int i = 0; i < readsNumber; ++i) {
-            idx.random_idx[i] = i;
-        }
-        if (shuffle) {
-            std::mt19937 gen(42);
-            std::shuffle(idx.random_idx.begin(), idx.random_idx.end(), gen);
-        }
-        printf("chrom: %d reads\n", readsNumber);
+    int readsNumber = _uuids.size();
+    _random_idx.resize(readsNumber);
+    for(int i = 0; i < readsNumber; ++i) {
+        _random_idx[i] = i;
     }
-
+    if (shuffle) {
+        std::mt19937 gen(42);
+        std::shuffle(_random_idx.begin(), _random_idx.end(), gen);
+    }
 }
 
-Read ReadsFile::read(const std::string& chrom)
-{
+Read ReadsFile::read(const int i) {
     Read read_data;
-    read_data.chrom = chrom;
-    ReadIDX& read_idx = _chrom_map[read_data.chrom];
-    const int readsNumber = read_idx.uuids.size();
-    if (read_idx.cur_id >= readsNumber) {
+    read_data.index = -1;
+    const int readsNumber = _uuids.size();
+    if (i >= readsNumber) {
         return read_data;
     }
-    const int id = read_idx.random_idx[read_idx.cur_id];
-    read_idx.cur_id += 1;
+    const int id = _random_idx[i];
     std::fstream file(_filename, std::ios::binary | std::ios::in);
     if (!file)
         return read_data;
-    read_data.uuid = read_idx.uuids[id];
-    size_t start_bytes = read_idx.poss_bytes[id];
-    size_t size_bytes = read_idx.pose_bytes[id] - start_bytes;
+    read_data.uuid = _uuids[id];
+    read_data.chrom = _chroms[id];
+    size_t start_bytes = _poss_bytes[id];
+    size_t size_bytes = _pose_bytes[id] - start_bytes;
     file.seekg(start_bytes, std::ios::beg);
     _cache_data.resize(size_bytes);
     file.read(_cache_data.data(), _cache_data.size());
@@ -136,6 +127,7 @@ Read ReadsFile::read(const std::string& chrom)
     memcpy(data_int.data(), ptr, data_size);
     read_data.mv = data_int;
     ptr += data_size;
+    read_data.index = id;
     return read_data;
 }
 
@@ -194,27 +186,18 @@ void ReadsFile::save(const std::string& fn, const std::vector<Read>& read_datas)
     return;
 }
 
-std::vector<Read> ReadsFile::readChunk(const int batch, const std::string& chrom, int min_size) {
-    std::vector<std::string> keys;
-    keys.reserve(_chrom_map.size());
-    for (const auto& pair : _chrom_map) {
-        keys.push_back(pair.first);
-    }
-    int num_keys = keys.size();
+std::vector<Read> ReadsFile::readChunk(const int batch, int min_size) {
     std::vector<Read> res;
     for (int i = 0; i < batch; ++i) {
-        std::string key;
-        if (chrom.empty()) {
-            key = keys[i % num_keys];
+        if (_cur_id >= _uuids.size()) {
+            break;
         }
-        else {
-            key = chrom;
-        }
-        Read read_data = read(key);
+        Read read_data = read(_cur_id);
         if (read_data.data.size() < min_size) {
             continue;
         }
         res.push_back(read_data);
+        ++_cur_id;
     }
     return res;
 }

@@ -172,14 +172,14 @@ void StepFitHMMGMM::saveModel(const std::string& fn_json_write) const {
     output_file << std::setw(4) << data;
 }
 
-void StepFitHMMGMM::train(const std::string& fn_data, const int batch, const std::string& chrom, const int max_iter, const int sampling, const char* method, const int max_band) {
+void StepFitHMMGMM::train(const std::string& fn_data, const int batch, const int max_iter, const int sampling, const char* method, const int max_band) {
     ReadsFile readsfile;
     readsfile.load(fn_data, false);
     Real resi = 0.0;
     Real prob_pre = 0.0;
     for (int iter = 0; iter < max_iter; ++iter) {
         int count = 0;
-        std::vector<Read> tags = readsfile.readChunk(batch, chrom, 3000);
+        std::vector<Read> tags = readsfile.readChunk(batch, 3000);
         while(tags.size() > 0) {
             std::vector<std::vector<Real>> datas;
             std::vector<std::vector<int>> mvs;
@@ -202,7 +202,7 @@ void StepFitHMMGMM::train(const std::string& fn_data, const int batch, const std
                 count++;
             }
             _hmm_model->EM_step(datas, _data_dim, method, adj_lists);
-            tags = readsfile.readChunk(batch, chrom, 3000);
+            tags = readsfile.readChunk(batch, 3000);
             if (sampling > 0 && count >= sampling) {break;}
         }
         readsfile.reset();
@@ -212,7 +212,7 @@ void StepFitHMMGMM::train(const std::string& fn_data, const int batch, const std
         printf("Iter: %d, Prob: %.4f, Residual: %.6f\n", iter, prob, resi);
     }
 }
-void StepFitHMMGMM::infer(const std::string& fn_data, const int batch, const std::string& chrom, const std::string& fn_out) {
+void StepFitHMMGMM::infer(const std::string& fn_data, const int batch, const std::string& fn_out) {
     std::ofstream tsv("tail_hmm.tsv", std::ios::out | std::ios::trunc);
     tsv << "read_id\tlabel\t";
     for (int i = 0; i < 50; ++i) {
@@ -226,7 +226,7 @@ void StepFitHMMGMM::infer(const std::string& fn_data, const int batch, const std
     ofile.close();
     ReadsFile readsfile;
     readsfile.load(fn_data, false);
-    std::vector<Read> tags = readsfile.readChunk(batch, chrom, 3000);
+    std::vector<Read> tags = readsfile.readChunk(batch, 3000);
     while(tags.size() > 0) {
         std::vector<std::vector<Real>> datas;
         std::vector<std::vector<int>> mvs;
@@ -272,17 +272,17 @@ void StepFitHMMGMM::infer(const std::string& fn_data, const int batch, const std
             tsv << "\n";
         }
         readsfile.save(fn_out, tags);
-        tags = readsfile.readChunk(batch, chrom, 3000);
+        tags = readsfile.readChunk(batch, 3000);
         return;
     }
 }
 
-void StepFitHMMGMM::segment(const std::string& fn_data, const int batch, const std::string& chrom, const std::string& fn_out) {
+void StepFitHMMGMM::segment(const std::string& fn_data, const int batch, const std::string& fn_out) {
     std::fstream ofile(fn_out, std::ios::binary | std::ios::trunc | std::ios::out);
     ofile.close();
     ReadsFile readsfile;
     readsfile.load(fn_data, false);
-    std::vector<Read> tags = readsfile.readChunk(batch, chrom, 1);
+    std::vector<Read> tags = readsfile.readChunk(batch, 1);
     while(tags.size() > 0) {
         std::vector<std::vector<Real>> datas;
         std::vector<std::vector<int>> labels(datas.size());
@@ -298,10 +298,10 @@ void StepFitHMMGMM::segment(const std::string& fn_data, const int batch, const s
     }
 }
 
-void StepFitHMMGMM::score(const std::string& fn_data, const int batch, const std::string& chrom, std::vector<std::string>& id, std::vector<Real>& label_real, std::vector<Real>& label_predict) {
+void StepFitHMMGMM::score(const std::string& fn_data, const int batch, std::vector<std::string>& id, std::vector<Real>& label_real, std::vector<Real>& label_predict) {
     ReadsFile readsfile;
     readsfile.load(fn_data, false);
-    std::vector<Read> tags = readsfile.readChunk(batch, chrom, 3000);
+    std::vector<Read> tags = readsfile.readChunk(batch, 3000);
     while(tags.size() > 0) {
         std::vector<std::vector<Real>> datas;
         std::vector<std::vector<int>> mvs;
@@ -319,6 +319,6 @@ void StepFitHMMGMM::score(const std::string& fn_data, const int batch, const std
             y = _id2label[mvs[i][0]].back() - '0';
             label_predict.push_back(y);
         }
-        tags = readsfile.readChunk(batch, chrom, 3000);
+        tags = readsfile.readChunk(batch, 3000);
     }
 }

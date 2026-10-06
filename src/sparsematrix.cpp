@@ -46,9 +46,9 @@ MixMatrix::MixMatrix(const MixMatrix& other): _row(other._row), _col(other._col)
     _ptr_csr = other._ptr_csr;
 }
 
-SparseVectorView MixMatrix::get_row(const int i) {
-    if (i >= _row) {
-        throw std::out_of_range("index out of range");
+SparseVectorView  MixMatrix::get_row(const int i) {
+    if (i < 0 || i >= _row) {
+        throw std::out_of_range("row index out of range");
     }
     int length = 0;
     SparseVectorView result;

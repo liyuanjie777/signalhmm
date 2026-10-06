@@ -99,7 +99,6 @@ void HMM::EM_step(const std::vector<std::vector<Real>>& datas, const int data_di
         const Real* data = datas[i].data();
         const int data_size = datas[i].size() / data_dim;
         MixMatrix& gamma = gammas[i];
-
         Real* epsilon = nullptr;
         if (std::strchr(method, 't') != nullptr) {
             epsilon = epsilons.data() + coo_num * i;

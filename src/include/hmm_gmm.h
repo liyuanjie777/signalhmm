@@ -10,10 +10,10 @@ public:
     void clear();
     void loadModel(const std::string& fn_json);
     void saveModel(const std::string& fn_json_write) const;
-    void train(const std::string& fn_data, const int batch, const std::string& chrom, const int max_iter, const int sampling, const char* method, const int max_band);
-    void infer(const std::string& fn_data, const int batch, const std::string& chrom, const std::string& fn_out);
-    void segment(const std::string& fn_data, const int batch, const std::string& chrom, const std::string& fn_out);
-    void score(const std::string& fn_data, const int batch, const std::string& chrom, std::vector<std::string>& id, std::vector<Real>& label_real, std::vector<Real>& label_predict);
+    void train(const std::string& fn_data, const int batch, const int max_iter, const int sampling, const char* method, const int max_band);
+    void infer(const std::string& fn_data, const int batch, const std::string& fn_out);
+    void segment(const std::string& fn_data, const int batch, const std::string& fn_out);
+    void score(const std::string& fn_data, const int batch, std::vector<std::string>& id, std::vector<Real>& label_real, std::vector<Real>& label_predict);
 
 private:
     int _state_number;

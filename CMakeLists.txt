@@ -7,7 +7,7 @@ find_package(OpenMP REQUIRED)
 
 add_executable(MapSignal
       src/fileio.cpp
-      src/signal_map.cpp
+        apps/signal_map.cpp
       src/sparsetransition.cpp
       src/hmm.cpp
       src/variable.cpp
@@ -19,6 +19,10 @@ add_executable(MapSignal
         src/include/segment.h
         src/segment.cpp
         src/include/json.hpp
+        apps/view.cpp
+        apps/stepfit.cpp
+        apps/view.h
+        apps/stepfit.h
 )
 
 include_directories(/usr/include/eigen3
