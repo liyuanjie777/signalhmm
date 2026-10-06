@@ -1,6 +1,6 @@
 # mapsignal
 
-A C++ tool for reading and inspecting nanopore current data and training hidden Markov models (HMMs).
+A C++ tool for nanopore current data and training hidden Markov models (HMMs).
 
 The main workflow uses a reference-based chain model to probabilistically align multiple current sequences and estimate representative mean current levels and their emission distributions. Positions associated with the same k-mer can share an emission model, pooling information across positions and reads.
 
