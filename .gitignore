@@ -10,3 +10,4 @@ build/
 
 # ide format
 .clang-format
+.idea
