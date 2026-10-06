@@ -96,8 +96,8 @@ int main(int argc, char* argv[]) {
         Options:
           --batch-size N          size of batch, default 1
           --sampling-number N     reads number for training，default 100
-          --max-iter N            max iter number，defualt 10
-          --max-band N            band width for gamma matrix, default 20
+          --iter-max N            max iter number，defualt 10
+          --band N            band width for gamma matrix, default 20
           --method STRING         update method, defualt te
                                     e：emission update
                                     t：transition update
@@ -106,7 +106,7 @@ int main(int argc, char* argv[]) {
         Example:
           mapsignal tain --data ./reads.bin --model ./model.json --out ./trained.json \
               --batch-size 20 --sampling-number 1500 \
-              --max-iter 50 --max-band 20 --method te
+              --iter-max 50 --band 20 --method te
         )";
         return 0;
     }
